@@ -1,5 +1,22 @@
 # Changelog
 
+## 1.5.0 (2026-03-10)
+
+### Features
+
+- add pre-release support (alpha, beta, rc) ([f33b949](https://github.com/urmzd/semantic-release/commit/f33b9492fdd912e91f23b3eaead21cc14a85e9ee))
+- add changelog templates, stage_files, pre/post hooks, and rollback ([93c524a](https://github.com/urmzd/semantic-release/commit/93c524a686090d11dd1810dee1bc105cde063743))
+
+### Documentation
+
+- comprehensive configuration and version file documentation ([1ebcf81](https://github.com/urmzd/semantic-release/commit/1ebcf81832575c57e57d81f1e8667d2c12c116c1))
+
+### Miscellaneous
+
+- switch to trusted publishing for crates.io ([ddb0be8](https://github.com/urmzd/semantic-release/commit/ddb0be8fb1e2c237fb6de6194d3cc91d0818e96c))
+- standardize GitHub Actions workflows ([eae04e5](https://github.com/urmzd/semantic-release/commit/eae04e58d2afc7e6e07b3441218844a2038969ce))
+
+
 ## 1.4.4 (2026-02-25)
 
 ### Bug Fixes
