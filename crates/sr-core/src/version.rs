@@ -44,6 +44,39 @@ pub fn apply_bump(version: &Version, bump: BumpLevel) -> Version {
     }
 }
 
+/// Apply a bump and produce a pre-release version.
+///
+/// Given a base version (the latest stable tag) and existing pre-release tags,
+/// computes the next pre-release: `X.Y.Z-<id>.N`.
+///
+/// - If the bumped version matches existing pre-release tags with the same id,
+///   increments N (e.g. `1.1.0-alpha.1` → `1.1.0-alpha.2`).
+/// - Otherwise starts at `.1`.
+pub fn apply_prerelease_bump(
+    version: &Version,
+    bump: BumpLevel,
+    prerelease_id: &str,
+    existing_tags: &[Version],
+) -> Version {
+    let base = apply_bump(version, bump);
+
+    // Find the highest existing pre-release number for this base + id
+    let max_n = existing_tags
+        .iter()
+        .filter(|v| v.major == base.major && v.minor == base.minor && v.patch == base.patch)
+        .filter_map(|v| {
+            let pre = v.pre.as_str();
+            let suffix = pre.strip_prefix(prerelease_id)?.strip_prefix('.')?;
+            suffix.parse::<u64>().ok()
+        })
+        .max()
+        .unwrap_or(0);
+
+    let mut result = base;
+    result.pre = semver::Prerelease::new(&format!("{prerelease_id}.{}", max_n + 1)).unwrap();
+    result
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -149,5 +182,49 @@ mod tests {
             determine_bump(&commits, &classifier()),
             Some(BumpLevel::Minor)
         );
+    }
+
+    // --- pre-release version tests ---
+
+    #[test]
+    fn prerelease_first_alpha() {
+        let v = Version::new(1, 0, 0);
+        let result = apply_prerelease_bump(&v, BumpLevel::Minor, "alpha", &[]);
+        assert_eq!(result.to_string(), "1.1.0-alpha.1");
+    }
+
+    #[test]
+    fn prerelease_increments_counter() {
+        let v = Version::new(1, 0, 0);
+        let existing = vec![
+            Version::parse("1.1.0-alpha.1").unwrap(),
+            Version::parse("1.1.0-alpha.2").unwrap(),
+        ];
+        let result = apply_prerelease_bump(&v, BumpLevel::Minor, "alpha", &existing);
+        assert_eq!(result.to_string(), "1.1.0-alpha.3");
+    }
+
+    #[test]
+    fn prerelease_different_id_starts_at_1() {
+        let v = Version::new(1, 0, 0);
+        let existing = vec![Version::parse("1.1.0-alpha.5").unwrap()];
+        let result = apply_prerelease_bump(&v, BumpLevel::Minor, "beta", &existing);
+        assert_eq!(result.to_string(), "1.1.0-beta.1");
+    }
+
+    #[test]
+    fn prerelease_different_base_starts_at_1() {
+        let v = Version::new(1, 0, 0);
+        let existing = vec![Version::parse("1.1.0-alpha.3").unwrap()];
+        // Major bump → 2.0.0-alpha.1 (not 1.1.0-alpha.4)
+        let result = apply_prerelease_bump(&v, BumpLevel::Major, "alpha", &existing);
+        assert_eq!(result.to_string(), "2.0.0-alpha.1");
+    }
+
+    #[test]
+    fn prerelease_rc_identifier() {
+        let v = Version::new(2, 3, 0);
+        let result = apply_prerelease_bump(&v, BumpLevel::Patch, "rc", &[]);
+        assert_eq!(result.to_string(), "2.3.1-rc.1");
     }
 }

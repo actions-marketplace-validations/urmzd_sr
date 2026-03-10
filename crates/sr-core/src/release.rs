@@ -9,7 +9,7 @@ use crate::commit::{CommitParser, ConventionalCommit, DefaultCommitClassifier};
 use crate::config::ReleaseConfig;
 use crate::error::ReleaseError;
 use crate::git::GitRepository;
-use crate::version::{BumpLevel, apply_bump, determine_bump};
+use crate::version::{BumpLevel, apply_bump, apply_prerelease_bump, determine_bump};
 use crate::version_files::bump_version_file;
 
 /// The computed plan for a release, before execution.
@@ -21,6 +21,7 @@ pub struct ReleasePlan {
     pub commits: Vec<ConventionalCommit>,
     pub tag_name: String,
     pub floating_tag_name: Option<String>,
+    pub prerelease: bool,
 }
 
 /// Orchestrates the release flow.
@@ -102,9 +103,22 @@ where
     F: ChangelogFormatter,
 {
     fn plan(&self) -> Result<ReleasePlan, ReleaseError> {
-        let tag_info = self.git.latest_tag(&self.config.tag_prefix)?;
+        let is_prerelease = self.config.prerelease.is_some();
 
-        let (current_version, from_sha) = match &tag_info {
+        // For stable releases, find the latest stable tag (skip pre-release tags).
+        // For pre-releases, find the latest tag of any kind to determine commits since.
+        let all_tags = self.git.all_tags(&self.config.tag_prefix)?;
+        let latest_stable = all_tags.iter().rev().find(|t| t.version.pre.is_empty());
+        let latest_any = all_tags.last();
+
+        // Use the latest tag (any kind) for commit range, but the latest stable for base version
+        let tag_info = if is_prerelease {
+            latest_any
+        } else {
+            latest_stable.or(latest_any)
+        };
+
+        let (current_version, from_sha) = match tag_info {
             Some(info) => (Some(info.version.clone()), Some(info.sha.as_str())),
             None => (None, None),
         };
@@ -113,7 +127,7 @@ where
         if raw_commits.is_empty() {
             // Force mode: re-release if HEAD is exactly at the latest tag
             if self.force
-                && let Some(ref info) = tag_info
+                && let Some(info) = tag_info
             {
                 let head = self.git.head_sha()?;
                 if head == info.sha {
@@ -125,14 +139,15 @@ where
                     return Ok(ReleasePlan {
                         current_version: Some(info.version.clone()),
                         next_version: info.version.clone(),
-                        bump: BumpLevel::Patch, // nominal; no actual bump
+                        bump: BumpLevel::Patch,
                         commits: vec![],
                         tag_name: info.name.clone(),
                         floating_tag_name,
+                        prerelease: is_prerelease,
                     });
                 }
             }
-            let (tag, sha) = match &tag_info {
+            let (tag, sha) = match tag_info {
                 Some(info) => (info.name.clone(), info.sha.clone()),
                 None => ("(none)".into(), "(none)".into()),
             };
@@ -149,7 +164,6 @@ where
             self.config.commit_pattern.clone(),
         );
         let tag_for_err = tag_info
-            .as_ref()
             .map(|i| i.name.clone())
             .unwrap_or_else(|| "(none)".into());
         let commit_count = conventional_commits.len();
@@ -159,11 +173,28 @@ where
                 commit_count,
             })?;
 
-        let base_version = current_version.clone().unwrap_or(Version::new(0, 0, 0));
-        let next_version = apply_bump(&base_version, bump);
+        // For pre-releases, base the version on the latest *stable* tag
+        let base_version = if is_prerelease {
+            latest_stable
+                .map(|t| t.version.clone())
+                .or(current_version.clone())
+                .unwrap_or(Version::new(0, 0, 0))
+        } else {
+            current_version.clone().unwrap_or(Version::new(0, 0, 0))
+        };
+
+        let next_version = if let Some(ref prerelease_id) = self.config.prerelease {
+            let existing_versions: Vec<Version> =
+                all_tags.iter().map(|t| t.version.clone()).collect();
+            apply_prerelease_bump(&base_version, bump, prerelease_id, &existing_versions)
+        } else {
+            apply_bump(&base_version, bump)
+        };
+
         let tag_name = format!("{}{next_version}", self.config.tag_prefix);
 
-        let floating_tag_name = if self.config.floating_tags {
+        // Don't update floating tags for pre-releases
+        let floating_tag_name = if self.config.floating_tags && !is_prerelease {
             Some(format!("{}{}", self.config.tag_prefix, next_version.major))
         } else {
             None
@@ -176,6 +207,7 @@ where
             commits: conventional_commits,
             tag_name,
             floating_tag_name,
+            prerelease: is_prerelease,
         })
     }
 
@@ -341,7 +373,12 @@ where
                 // Delete and recreate to update the release notes
                 vcs.delete_release(&plan.tag_name)?;
             }
-            vcs.create_release(&plan.tag_name, &release_name, &changelog_body, false)?;
+            vcs.create_release(
+                &plan.tag_name,
+                &release_name,
+                &changelog_body,
+                plan.prerelease,
+            )?;
         }
 
         // 10. Upload artifacts
@@ -1481,5 +1518,135 @@ mod tests {
             !post_marker.exists(),
             "post-release hook should not run in dry-run"
         );
+    }
+
+    // --- pre-release tests ---
+
+    #[test]
+    fn plan_prerelease_first_release() {
+        let mut config = ReleaseConfig::default();
+        config.prerelease = Some("alpha".into());
+
+        let s = make_strategy(vec![], vec![raw_commit("feat: something")], config);
+        let plan = s.plan().unwrap();
+        assert_eq!(plan.next_version.to_string(), "0.1.0-alpha.1");
+        assert_eq!(plan.tag_name, "v0.1.0-alpha.1");
+        assert!(plan.prerelease);
+    }
+
+    #[test]
+    fn plan_prerelease_increments_from_stable() {
+        let tag = TagInfo {
+            name: "v1.0.0".into(),
+            version: Version::new(1, 0, 0),
+            sha: "d".repeat(40),
+        };
+        let mut config = ReleaseConfig::default();
+        config.prerelease = Some("beta".into());
+
+        let s = make_strategy(vec![tag], vec![raw_commit("feat: new feature")], config);
+        let plan = s.plan().unwrap();
+        assert_eq!(plan.next_version.to_string(), "1.1.0-beta.1");
+        assert!(plan.prerelease);
+    }
+
+    #[test]
+    fn plan_prerelease_increments_counter() {
+        let tags = vec![
+            TagInfo {
+                name: "v1.0.0".into(),
+                version: Version::new(1, 0, 0),
+                sha: "a".repeat(40),
+            },
+            TagInfo {
+                name: "v1.1.0-alpha.1".into(),
+                version: Version::parse("1.1.0-alpha.1").unwrap(),
+                sha: "b".repeat(40),
+            },
+            TagInfo {
+                name: "v1.1.0-alpha.2".into(),
+                version: Version::parse("1.1.0-alpha.2").unwrap(),
+                sha: "c".repeat(40),
+            },
+        ];
+        let mut config = ReleaseConfig::default();
+        config.prerelease = Some("alpha".into());
+
+        let s = make_strategy(tags, vec![raw_commit("feat: another")], config);
+        let plan = s.plan().unwrap();
+        assert_eq!(plan.next_version.to_string(), "1.1.0-alpha.3");
+    }
+
+    #[test]
+    fn plan_prerelease_different_id_starts_at_1() {
+        let tags = vec![
+            TagInfo {
+                name: "v1.0.0".into(),
+                version: Version::new(1, 0, 0),
+                sha: "a".repeat(40),
+            },
+            TagInfo {
+                name: "v1.1.0-alpha.3".into(),
+                version: Version::parse("1.1.0-alpha.3").unwrap(),
+                sha: "b".repeat(40),
+            },
+        ];
+        let mut config = ReleaseConfig::default();
+        config.prerelease = Some("beta".into());
+
+        let s = make_strategy(tags, vec![raw_commit("feat: something")], config);
+        let plan = s.plan().unwrap();
+        assert_eq!(plan.next_version.to_string(), "1.1.0-beta.1");
+    }
+
+    #[test]
+    fn plan_prerelease_no_floating_tags() {
+        let mut config = ReleaseConfig::default();
+        config.prerelease = Some("rc".into());
+        config.floating_tags = true;
+
+        let s = make_strategy(vec![], vec![raw_commit("feat: something")], config);
+        let plan = s.plan().unwrap();
+        assert!(
+            plan.floating_tag_name.is_none(),
+            "pre-releases should not create floating tags"
+        );
+    }
+
+    #[test]
+    fn plan_stable_skips_prerelease_tags() {
+        let tags = vec![
+            TagInfo {
+                name: "v1.0.0".into(),
+                version: Version::new(1, 0, 0),
+                sha: "a".repeat(40),
+            },
+            TagInfo {
+                name: "v1.1.0-alpha.1".into(),
+                version: Version::parse("1.1.0-alpha.1").unwrap(),
+                sha: "b".repeat(40),
+            },
+        ];
+        // No prerelease config — stable release
+        let s = make_strategy(
+            tags,
+            vec![raw_commit("feat: something")],
+            ReleaseConfig::default(),
+        );
+        let plan = s.plan().unwrap();
+        // Should base on v1.0.0, not v1.1.0-alpha.1
+        assert_eq!(plan.next_version, Version::new(1, 1, 0));
+        assert!(!plan.prerelease);
+    }
+
+    #[test]
+    fn plan_prerelease_marks_plan_as_prerelease() {
+        let mut config = ReleaseConfig::default();
+        config.prerelease = Some("alpha".into());
+
+        let s = make_strategy(vec![], vec![raw_commit("fix: bug")], config);
+        let plan = s.plan().unwrap();
+        assert!(plan.prerelease);
+        assert!(plan.next_version.to_string().contains("alpha"));
     }
 }

@@ -366,6 +366,7 @@ All diagnostic messages go to stderr, so stdout is always clean JSON (or empty o
 - `sr release --stage-files Cargo.lock` — stage additional files after build (repeatable)
 - `sr release --pre-release-command 'cargo test'` — run a command before the release starts
 - `sr release --post-release-command './notify.sh'` — run a command after the release completes
+- `sr release --prerelease alpha` — produce pre-release versions (e.g. `1.2.0-alpha.1`)
 - `sr plan --format json` — machine-readable output
 - `sr changelog --write` — write changelog to disk
 - `sr version --short` — print only the version number
@@ -414,6 +415,7 @@ Force mode will error if:
 | `artifacts` | `string[]` | `[]` | Glob patterns for files to upload to the GitHub release |
 | `floating_tags` | `bool` | `false` | Create floating major version tags (e.g. `v3` always points to the latest `v3.x.x` release) |
 | `build_command` | `string?` | `null` | Shell command to run after version bump but before commit. `SR_VERSION` and `SR_TAG` env vars are set |
+| `prerelease` | `string?` | `null` | Pre-release identifier (e.g. `"alpha"`, `"beta"`, `"rc"`). When set, versions are formatted as `X.Y.Z-<id>.N` |
 | `stage_files` | `string[]` | `[]` | Additional file globs to stage after `build_command` runs (e.g. `["Cargo.lock"]`) |
 | `pre_release_command` | `string?` | `null` | Shell command to run before the release starts (validation, checks). `SR_VERSION` and `SR_TAG` env vars are set |
 | `post_release_command` | `string?` | `null` | Shell command to run after the release completes (notifications, deployments). `SR_VERSION` and `SR_TAG` env vars are set |
@@ -617,10 +619,27 @@ Understanding the execution order helps when configuring hooks:
 
 If any step in 1-4 fails, modified files are automatically rolled back to their original contents. Steps 6-9 are idempotent — re-running with `--force` will skip already-completed steps.
 
+### Pre-releases
+
+Set `prerelease` to produce versions like `1.2.0-alpha.1` instead of `1.2.0`:
+
+```yaml
+prerelease: alpha
+```
+
+Or via CLI: `sr release --prerelease alpha`
+
+**Behavior:**
+- The version is based on the latest *stable* tag (pre-release tags are skipped when computing the base)
+- The counter auto-increments by scanning existing tags: `1.2.0-alpha.1` → `1.2.0-alpha.2` → ...
+- Switching identifiers resets the counter: `1.2.0-alpha.3` → `1.2.0-beta.1`
+- The GitHub release is marked as a pre-release
+- Floating tags are not updated for pre-releases
+- Stable releases (`prerelease: null`) skip over pre-release tags entirely
+
 ### Limitations
 
 - **Single branch only** — no release branches or multi-branch workflows
-- **No pre-releases** — no support for alpha/beta/rc tags
 - **GitHub only** — the `VcsProvider` trait exists for extensibility, but only GitHub is implemented
 
 ## Architecture

@@ -23,6 +23,9 @@ pub struct ReleaseConfig {
     pub build_command: Option<String>,
     /// Additional files/globs to stage after `build_command` runs (e.g. `Cargo.lock`).
     pub stage_files: Vec<String>,
+    /// Pre-release identifier (e.g. "alpha", "beta", "rc"). When set, versions are
+    /// formatted as X.Y.Z-<id>.N where N auto-increments.
+    pub prerelease: Option<String>,
     /// Shell command to run before the release starts (validation, checks).
     pub pre_release_command: Option<String>,
     /// Shell command to run after the release completes (notifications, deployments).
@@ -45,6 +48,7 @@ impl Default for ReleaseConfig {
             floating_tags: false,
             build_command: None,
             stage_files: vec![],
+            prerelease: None,
             pre_release_command: None,
             post_release_command: None,
         }

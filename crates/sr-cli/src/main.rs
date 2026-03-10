@@ -50,6 +50,10 @@ enum Commands {
         /// Shell command to run after the release completes
         #[arg(long)]
         post_release_command: Option<String>,
+
+        /// Pre-release identifier (e.g. alpha, beta, rc). Produces versions like 1.2.0-alpha.1
+        #[arg(long)]
+        prerelease: Option<String>,
     },
 
     /// Show what the next release would look like
@@ -477,6 +481,7 @@ fn run() -> anyhow::Result<()> {
             stage_files,
             pre_release_command,
             post_release_command,
+            prerelease,
         } => {
             let mut config = ReleaseConfig::load(Path::new(DEFAULT_CONFIG_FILE))?;
             config.artifacts.extend(artifacts);
@@ -489,6 +494,9 @@ fn run() -> anyhow::Result<()> {
             }
             if post_release_command.is_some() {
                 config.post_release_command = post_release_command;
+            }
+            if prerelease.is_some() {
+                config.prerelease = prerelease;
             }
 
             // Try to build with GitHub; fall back to local-only if no token
