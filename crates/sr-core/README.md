@@ -13,7 +13,7 @@ Pure domain logic for [sr](https://github.com/urmzd/semantic-release) — a sing
 | Trait | Purpose |
 |-------|---------|
 | `GitRepository` | Tag discovery, commit listing, tag/push operations |
-| `VcsProvider` | Remote release creation (GitHub, GitLab, etc.) |
+| `VcsProvider` | Remote release creation/update, asset uploads, verification |
 | `CommitParser` | Parse raw commits into conventional commits |
 | `CommitClassifier` | Map commit types to bump levels and changelog sections |
 | `ChangelogFormatter` | Render changelog entries to text |

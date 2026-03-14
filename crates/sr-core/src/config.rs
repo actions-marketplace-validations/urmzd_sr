@@ -30,6 +30,14 @@ pub struct ReleaseConfig {
     pub pre_release_command: Option<String>,
     /// Shell command to run after the release completes (notifications, deployments).
     pub post_release_command: Option<String>,
+    /// Sign annotated tags with GPG/SSH (git tag -s).
+    pub sign_tags: bool,
+    /// Create GitHub releases as drafts (requires manual publishing).
+    pub draft: bool,
+    /// Minijinja template for the GitHub release name.
+    /// Available variables: `version`, `tag_name`, `tag_prefix`.
+    /// Default when None: uses the tag name (e.g. "v1.2.0").
+    pub release_name_template: Option<String>,
 }
 
 impl Default for ReleaseConfig {
@@ -51,6 +59,9 @@ impl Default for ReleaseConfig {
             prerelease: None,
             pre_release_command: None,
             post_release_command: None,
+            sign_tags: false,
+            draft: false,
+            release_name_template: None,
         }
     }
 }

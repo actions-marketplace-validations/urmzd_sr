@@ -20,8 +20,8 @@ pub trait GitRepository: Send + Sync {
     /// If `from` is `None`, returns all commits reachable from HEAD.
     fn commits_since(&self, from: Option<&str>) -> Result<Vec<Commit>, ReleaseError>;
 
-    /// Create an annotated tag at HEAD.
-    fn create_tag(&self, name: &str, message: &str) -> Result<(), ReleaseError>;
+    /// Create an annotated tag at HEAD. When `sign` is true, uses `-s` for GPG/SSH signing.
+    fn create_tag(&self, name: &str, message: &str, sign: bool) -> Result<(), ReleaseError>;
 
     /// Push a tag to the remote.
     fn push_tag(&self, name: &str) -> Result<(), ReleaseError>;
@@ -49,7 +49,8 @@ pub trait GitRepository: Send + Sync {
     fn tag_date(&self, tag_name: &str) -> Result<String, ReleaseError>;
 
     /// Force-create an annotated tag at HEAD, overwriting if it already exists.
-    fn force_create_tag(&self, name: &str, message: &str) -> Result<(), ReleaseError>;
+    /// When `sign` is true, uses `-s` for GPG/SSH signing.
+    fn force_create_tag(&self, name: &str, message: &str, sign: bool) -> Result<(), ReleaseError>;
 
     /// Force-push a tag to the remote, overwriting the remote tag if it exists.
     fn force_push_tag(&self, name: &str) -> Result<(), ReleaseError>;

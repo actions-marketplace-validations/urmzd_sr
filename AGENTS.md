@@ -20,7 +20,7 @@ Rust workspace with four crates:
 | Trait | Purpose |
 |-------|---------|
 | `GitRepository` | Tag discovery, commit listing, tag creation, push |
-| `VcsProvider` | Remote release creation (GitHub releases) |
+| `VcsProvider` | Remote release creation/update, asset uploads, verification |
 | `CommitParser` | Raw commit → conventional commit |
 | `ChangelogFormatter` | Render changelog entries to text |
 | `ReleaseStrategy` | Orchestrate plan + execute |

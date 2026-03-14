@@ -34,6 +34,7 @@ let url = provider.create_release(
     "v1.0.0",           // release name
     "## What's Changed", // body (markdown)
     false,               // prerelease
+    false,               // draft
 )?;
 
 // Check if a release exists
@@ -49,10 +50,12 @@ let url = provider.compare_url("v0.9.0", "v1.0.0")?;
 | Method | Description |
 |--------|-------------|
 | `GitHubProvider::new(owner, repo, hostname, token)` | Create a new provider for the given GitHub repository |
-| `create_release(tag, name, body, prerelease)` | Create a GitHub release, returns the release URL |
+| `create_release(tag, name, body, prerelease, draft)` | Create a GitHub release, returns the release URL |
+| `update_release(tag, name, body, prerelease, draft)` | Update an existing release via PATCH (preserves assets) |
 | `release_exists(tag)` | Check whether a release already exists for a tag |
 | `delete_release(tag)` | Delete a release by tag |
-| `upload_assets(tag, files)` | Upload asset files to an existing release |
+| `upload_assets(tag, files)` | Upload asset files to an existing release (with retry and MIME detection) |
+| `verify_release(tag)` | Verify a release exists and is accessible |
 | `compare_url(base, head)` | Generate a GitHub compare URL between two refs |
 | `repo_url()` | Return the repository URL (`https://github.com/owner/repo`) |
 

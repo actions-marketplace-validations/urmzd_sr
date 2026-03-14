@@ -24,13 +24,15 @@ Perform a semantic release using `sr`.
 | `sr release` | Execute a full release |
 | `sr release --dry-run` | Simulate without side effects |
 | `sr release --force` | Re-release current tag (partial failure recovery) |
+| `sr release --sign-tags` | Sign tags with GPG/SSH |
+| `sr release --draft` | Create GitHub release as draft |
 | `sr changelog --write` | Write changelog to disk |
 | `sr version --short` | Print next version number |
 | `sr config --resolved` | Show resolved config with defaults |
 
 ## Release Execution Order
 
-1. Pre-release command → 2. Bump version files → 3. Write changelog → 4. Build command → 5. Git commit → 6. Create/push tag → 7. Floating tag → 8. GitHub release → 9. Upload artifacts → 10. Post-release command
+1. Pre-release command → 2. Bump version files → 3. Write changelog → 4. Build command → 5. Git commit → 6. Create/push tag (signed if configured) → 7. Floating tag → 8. Create/update GitHub release (draft if configured) → 9. Upload artifacts + SHA256 checksums → 10. Verify release → 11. Post-release command
 
 ## Environment
 

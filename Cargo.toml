@@ -50,5 +50,8 @@ base64 = "0.22"
 # Globbing
 glob = "0.3"
 
+# Hashing
+sha2 = "0.10"
+
 # Testing
 tempfile = "3"

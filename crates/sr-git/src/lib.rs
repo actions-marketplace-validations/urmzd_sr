@@ -203,8 +203,9 @@ impl GitRepository for NativeGitRepository {
         Ok(parse_commit_log(&output))
     }
 
-    fn create_tag(&self, name: &str, message: &str) -> Result<(), ReleaseError> {
-        self.git(&["tag", "-a", name, "-m", message])?;
+    fn create_tag(&self, name: &str, message: &str, sign: bool) -> Result<(), ReleaseError> {
+        let flag = if sign { "-s" } else { "-a" };
+        self.git(&["tag", flag, name, "-m", message])?;
         Ok(())
     }
 
@@ -292,8 +293,9 @@ impl GitRepository for NativeGitRepository {
         Ok(date)
     }
 
-    fn force_create_tag(&self, name: &str, message: &str) -> Result<(), ReleaseError> {
-        self.git(&["tag", "-fa", name, "-m", message])?;
+    fn force_create_tag(&self, name: &str, message: &str, sign: bool) -> Result<(), ReleaseError> {
+        let flag = if sign { "-fs" } else { "-fa" };
+        self.git(&["tag", flag, name, "-m", message])?;
         Ok(())
     }
 

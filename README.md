@@ -22,10 +22,14 @@ The npm `semantic-release` ecosystem is battle-tested but comes with friction:
 ## Features
 
 - Conventional Commits parsing (built-in, configurable via `commit_pattern`)
+- `BREAKING CHANGE:` / `BREAKING-CHANGE:` footer detection (in addition to `!` suffix)
 - Semantic versioning bumps (major / minor / patch)
 - Automatic version file bumping (Cargo.toml, package.json, pyproject.toml, pom.xml, Gradle, Go)
-- Changelog generation (markdown, with configurable sections)
+- Changelog generation (markdown, with configurable sections and compare URLs)
 - GitHub Releases (via REST API — no external tools needed)
+- Draft releases and signed tags (GPG/SSH)
+- SHA256 checksum sidecar files for uploaded artifacts
+- Customizable release names via minijinja templates
 - Structured JSON output for CI piping (`sr release | jq .version`)
 - Trunk-based workflow (tag + release from `main`)
 
@@ -367,6 +371,8 @@ All diagnostic messages go to stderr, so stdout is always clean JSON (or empty o
 - `sr release --pre-release-command 'cargo test'` — run a command before the release starts
 - `sr release --post-release-command './notify.sh'` — run a command after the release completes
 - `sr release --prerelease alpha` — produce pre-release versions (e.g. `1.2.0-alpha.1`)
+- `sr release --sign-tags` — sign tags with GPG/SSH (`git tag -s`)
+- `sr release --draft` — create GitHub release as a draft (requires manual publishing)
 - `sr plan --format json` — machine-readable output
 - `sr changelog --write` — write changelog to disk
 - `sr version --short` — print only the version number
@@ -419,6 +425,9 @@ Force mode will error if:
 | `stage_files` | `string[]` | `[]` | Additional file globs to stage after `build_command` runs (e.g. `["Cargo.lock"]`) |
 | `pre_release_command` | `string?` | `null` | Shell command to run before the release starts (validation, checks). `SR_VERSION` and `SR_TAG` env vars are set |
 | `post_release_command` | `string?` | `null` | Shell command to run after the release completes (notifications, deployments). `SR_VERSION` and `SR_TAG` env vars are set |
+| `sign_tags` | `bool` | `false` | Sign annotated tags with GPG/SSH (`git tag -s` instead of `git tag -a`). Requires a signing key configured in git |
+| `draft` | `bool` | `false` | Create GitHub releases as drafts. Draft releases are not visible to the public until manually published |
+| `release_name_template` | `string?` | `null` | [Minijinja](https://docs.rs/minijinja) template for the GitHub release name. Variables: `version`, `tag_name`, `tag_prefix`. Default: uses the tag name (e.g. `v1.2.0`) |
 | `changelog.template` | `string?` | `null` | Custom [minijinja](https://docs.rs/minijinja) template for changelog rendering. See template variables below |
 
 ### Example config
@@ -467,6 +476,15 @@ version_files:
 version_files_strict: false
 
 floating_tags: false
+
+# Sign tags with GPG/SSH (requires signing key configured in git)
+sign_tags: false
+
+# Create GitHub releases as drafts (requires manual publishing)
+draft: false
+
+# Custom release name template (minijinja/Jinja2 syntax, optional)
+# release_name_template: "Release {{ version }}"
 
 build_command: "cargo build --release"
 
@@ -521,7 +539,12 @@ Each entry in the `types` list has these fields:
 | `bump` | `string?` | No | Bump level: `major`, `minor`, or `patch`. Omit to not trigger a release for this type |
 | `section` | `string?` | No | Changelog section heading (e.g. `"Features"`). Omit to exclude from changelog |
 
-Breaking changes (commits with `!` after the type, e.g. `feat!:`) always trigger a `major` bump regardless of the type's configured bump level.
+Breaking changes are detected in two ways per the [Conventional Commits](https://www.conventionalcommits.org/) spec:
+
+1. **`!` suffix** — e.g. `feat!: new API` or `fix(core)!: rename method`
+2. **`BREAKING CHANGE:` footer** — a line starting with `BREAKING CHANGE:` or `BREAKING-CHANGE:` in the commit body
+
+Either form triggers a `major` bump regardless of the type's configured bump level.
 
 #### Default commit-type mapping
 
@@ -611,13 +634,14 @@ Understanding the execution order helps when configuring hooks:
 3. **Write changelog** — the changelog file is written (if configured)
 4. **Run build command** — `build_command` runs with `SR_VERSION`/`SR_TAG` set. Version files already contain the new version
 5. **Git commit** — version files + changelog + `stage_files` are staged and committed as `chore(release): <tag> [skip ci]`
-6. **Create and push tag**
+6. **Create and push tag** — annotated tag at HEAD (signed with GPG/SSH when `sign_tags: true`)
 7. **Create/update floating tag** (if `floating_tags: true`)
-8. **Create GitHub release**
-9. **Upload artifacts**
-10. **Post-release command** — `post_release_command` runs last (notifications, deployments)
+8. **Create or update GitHub release** — uses PATCH to preserve existing assets on re-runs; supports `draft` mode
+9. **Upload artifacts** — with SHA256 checksum sidecar files (`.sha256`) and MIME-type-aware uploads
+10. **Verify release** — confirms the GitHub release exists and is accessible
+11. **Post-release command** — `post_release_command` runs last (notifications, deployments)
 
-If any step in 1-4 fails, modified files are automatically rolled back to their original contents. Steps 6-9 are idempotent — re-running with `--force` will skip already-completed steps.
+If any step in 1-4 fails, modified files are automatically rolled back to their original contents. Steps 6-10 are idempotent — re-running with `--force` will skip already-completed steps.
 
 ### Pre-releases
 
@@ -659,7 +683,7 @@ Or via CLI: `sr release --prerelease alpha`
 | Trait | Purpose |
 |-------|---------|
 | `GitRepository` | Tag discovery, commit listing, tag creation, push |
-| `VcsProvider` | Remote release creation (GitHub, GitLab, etc.) |
+| `VcsProvider` | Remote release creation, updates, asset uploads, verification |
 | `CommitParser` | Raw commit to conventional commit |
 | `ChangelogFormatter` | Render changelog entries to text |
 | `ReleaseStrategy` | Orchestrate plan + execute |

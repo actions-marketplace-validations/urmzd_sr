@@ -42,6 +42,7 @@ pub trait VcsProvider: Send + Sync {
         name: &str,
         body: &str,
         prerelease: bool,
+        draft: bool,
     ) -> Result<String, ReleaseError>;
 
     /// Generate a compare URL between two refs.
@@ -58,8 +59,27 @@ pub trait VcsProvider: Send + Sync {
         None
     }
 
+    /// Update an existing release (name and body) using PATCH semantics,
+    /// preserving any previously uploaded assets.
+    fn update_release(
+        &self,
+        tag: &str,
+        name: &str,
+        body: &str,
+        prerelease: bool,
+        draft: bool,
+    ) -> Result<String, ReleaseError> {
+        self.delete_release(tag)?;
+        self.create_release(tag, name, body, prerelease, draft)
+    }
+
     /// Upload asset files to an existing release identified by tag.
     fn upload_assets(&self, _tag: &str, _files: &[&str]) -> Result<(), ReleaseError> {
+        Ok(())
+    }
+
+    /// Verify that a release exists and is in the expected state after creation.
+    fn verify_release(&self, _tag: &str) -> Result<(), ReleaseError> {
         Ok(())
     }
 }
@@ -84,14 +104,40 @@ where
 {
     fn format_changelog(&self, plan: &ReleasePlan) -> Result<String, ReleaseError> {
         let today = today_string();
+        let compare_url = self.vcs.as_ref().and_then(|vcs| {
+            let base = match &plan.current_version {
+                Some(v) => format!("{}{v}", self.config.tag_prefix),
+                None => return None,
+            };
+            vcs.compare_url(&base, &plan.tag_name).ok()
+        });
         let entry = ChangelogEntry {
             version: plan.next_version.to_string(),
             date: today,
             commits: plan.commits.clone(),
-            compare_url: None,
+            compare_url,
             repo_url: self.vcs.as_ref().and_then(|v| v.repo_url()),
         };
         self.formatter.format(&[entry])
+    }
+
+    /// Render the release name from the configured template, or fall back to the tag name.
+    fn release_name(&self, plan: &ReleasePlan) -> String {
+        if let Some(ref template_str) = self.config.release_name_template {
+            let mut env = minijinja::Environment::new();
+            if env.add_template("release_name", template_str).is_ok()
+                && let Ok(tmpl) = env.get_template("release_name")
+                && let Ok(rendered) = tmpl.render(minijinja::context! {
+                    version => plan.next_version.to_string(),
+                    tag_name => &plan.tag_name,
+                    tag_prefix => &self.config.tag_prefix,
+                })
+            {
+                return rendered;
+            }
+            eprintln!("warning: invalid release_name_template, falling back to tag name");
+        }
+        plan.tag_name.clone()
     }
 }
 
@@ -156,6 +202,7 @@ where
 
         let conventional_commits: Vec<ConventionalCommit> = raw_commits
             .iter()
+            .filter(|c| !c.message.starts_with("chore(release):"))
             .filter_map(|c| self.parser.parse(c).ok())
             .collect();
 
@@ -219,15 +266,22 @@ where
             if let Some(ref cmd) = self.config.pre_release_command {
                 eprintln!("[dry-run] Would run pre-release command: {cmd}");
             }
-            eprintln!("[dry-run] Would create tag: {}", plan.tag_name);
+            let sign_label = if self.config.sign_tags {
+                " (signed)"
+            } else {
+                ""
+            };
+            eprintln!("[dry-run] Would create tag: {}{sign_label}", plan.tag_name);
             eprintln!("[dry-run] Would push tag: {}", plan.tag_name);
             if let Some(ref floating) = plan.floating_tag_name {
                 eprintln!("[dry-run] Would create/update floating tag: {floating}");
                 eprintln!("[dry-run] Would force-push floating tag: {floating}");
             }
             if self.vcs.is_some() {
+                let draft_label = if self.config.draft { " (draft)" } else { "" };
+                let release_name = self.release_name(plan);
                 eprintln!(
-                    "[dry-run] Would create GitHub release for {}",
+                    "[dry-run] Would create GitHub release \"{release_name}\" for {}{draft_label}",
                     plan.tag_name
                 );
             }
@@ -316,15 +370,14 @@ where
         }
 
         // Run the mutable pre-commit steps with rollback on failure
-        let bumped_files =
-            match self.execute_pre_commit(plan, &version_str, &changelog_body, &file_snapshots) {
-                Ok(files) => files,
-                Err(e) => {
-                    eprintln!("error during pre-commit steps, restoring files...");
-                    restore_snapshots(&file_snapshots);
-                    return Err(e);
-                }
-            };
+        let bumped_files = match self.execute_pre_commit(plan, &version_str, &changelog_body) {
+            Ok(files) => files,
+            Err(e) => {
+                eprintln!("error during pre-commit steps, restoring files...");
+                restore_snapshots(&file_snapshots);
+                return Err(e);
+            }
+        };
 
         // 4. Resolve stage_files globs and collect all paths to stage
         {
@@ -348,7 +401,9 @@ where
 
         // 5. Create tag (skip if it already exists locally)
         if !self.git.tag_exists(&plan.tag_name)? {
-            self.git.create_tag(&plan.tag_name, &changelog_body)?;
+            let tag_message = format!("{}\n\n{}", plan.tag_name, changelog_body);
+            self.git
+                .create_tag(&plan.tag_name, &tag_message, self.config.sign_tags)?;
         }
 
         // 6. Push commit (safe to re-run — no-op if up to date)
@@ -362,42 +417,74 @@ where
         // 8. Force-create and force-push floating tag (e.g. v3)
         if let Some(ref floating) = plan.floating_tag_name {
             let floating_msg = format!("Floating tag for {}", plan.tag_name);
-            self.git.force_create_tag(floating, &floating_msg)?;
+            self.git
+                .force_create_tag(floating, &floating_msg, self.config.sign_tags)?;
             self.git.force_push_tag(floating)?;
         }
 
-        // 9. Create GitHub release (skip if exists, or update it)
+        // 9. Create or update GitHub release
+        let release_name = self.release_name(plan);
         if let Some(ref vcs) = self.vcs {
-            let release_name = format!("{} {}", self.config.tag_prefix, plan.next_version);
             if vcs.release_exists(&plan.tag_name)? {
-                // Delete and recreate to update the release notes
-                vcs.delete_release(&plan.tag_name)?;
+                // PATCH update preserves existing assets
+                vcs.update_release(
+                    &plan.tag_name,
+                    &release_name,
+                    &changelog_body,
+                    plan.prerelease,
+                    self.config.draft,
+                )?;
+            } else {
+                vcs.create_release(
+                    &plan.tag_name,
+                    &release_name,
+                    &changelog_body,
+                    plan.prerelease,
+                    self.config.draft,
+                )?;
             }
-            vcs.create_release(
-                &plan.tag_name,
-                &release_name,
-                &changelog_body,
-                plan.prerelease,
-            )?;
         }
 
-        // 10. Upload artifacts
+        // 10. Upload artifacts (with SHA256 checksums)
         if let Some(ref vcs) = self.vcs
             && !self.config.artifacts.is_empty()
         {
             let resolved = resolve_artifact_globs(&self.config.artifacts)?;
             if !resolved.is_empty() {
-                let file_refs: Vec<&str> = resolved.iter().map(|s| s.as_str()).collect();
+                // Generate SHA256 checksum sidecar files
+                let checksum_files = generate_checksums(&resolved)?;
+                let mut all_files = resolved.clone();
+                all_files.extend(checksum_files.iter().cloned());
+
+                let file_refs: Vec<&str> = all_files.iter().map(|s| s.as_str()).collect();
                 vcs.upload_assets(&plan.tag_name, &file_refs)?;
                 eprintln!(
-                    "Uploaded {} artifact(s) to {}",
+                    "Uploaded {} artifact(s) + {} checksum(s) to {}",
                     resolved.len(),
+                    checksum_files.len(),
                     plan.tag_name
                 );
+
+                // Clean up generated checksum files
+                for f in &checksum_files {
+                    let _ = fs::remove_file(f);
+                }
             }
         }
 
-        // 11. Run post-release command if configured
+        // 11. Verify release was created/updated successfully
+        if let Some(ref vcs) = self.vcs
+            && let Err(e) = vcs.verify_release(&plan.tag_name)
+        {
+            eprintln!("warning: post-release verification failed: {e}");
+            eprintln!(
+                "  The tag {} was pushed but the GitHub release may be incomplete.",
+                plan.tag_name
+            );
+            eprintln!("  Re-run with --force to retry.");
+        }
+
+        // 12. Run post-release command if configured
         if let Some(ref cmd) = self.config.post_release_command {
             eprintln!("Running post-release command: {cmd}");
             run_hook(cmd, &version_str, &plan.tag_name, "post_release_command")?;
@@ -422,7 +509,6 @@ where
         plan: &ReleasePlan,
         version_str: &str,
         changelog_body: &str,
-        _snapshots: &[(String, Option<String>)],
     ) -> Result<Vec<String>, ReleaseError> {
         // 2. Bump version files
         let mut bumped_files: Vec<String> = Vec::new();
@@ -548,20 +634,51 @@ fn resolve_artifact_globs(patterns: &[String]) -> Result<Vec<String>, ReleaseErr
     Ok(files.into_iter().collect())
 }
 
+/// Generate SHA256 checksum sidecar files for a list of artifact paths.
+/// Returns the paths to the generated `.sha256` files.
+fn generate_checksums(files: &[String]) -> Result<Vec<String>, ReleaseError> {
+    use sha2::{Digest, Sha256};
+
+    let mut checksum_paths = Vec::new();
+    for file_path in files {
+        let data = fs::read(file_path).map_err(|e| {
+            ReleaseError::Vcs(format!("failed to read {file_path} for checksum: {e}"))
+        })?;
+        let hash = Sha256::digest(&data);
+        let hex = format!("{hash:x}");
+        let file_name = Path::new(file_path)
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("unknown");
+        let checksum_content = format!("{hex}  {file_name}\n");
+        let checksum_path = format!("{file_path}.sha256");
+        fs::write(&checksum_path, checksum_content)
+            .map_err(|e| ReleaseError::Vcs(format!("failed to write checksum file: {e}")))?;
+        checksum_paths.push(checksum_path);
+    }
+    Ok(checksum_paths)
+}
+
 pub fn today_string() -> String {
-    // Use a simple approach: read from the `date` command or fallback
-    std::process::Command::new("date")
-        .arg("+%Y-%m-%d")
-        .output()
-        .ok()
-        .and_then(|o| {
-            if o.status.success() {
-                Some(String::from_utf8_lossy(&o.stdout).trim().to_string())
-            } else {
-                None
-            }
-        })
-        .unwrap_or_else(|| "unknown".to_string())
+    // Portable date calculation from UNIX epoch (no external deps or subprocess).
+    // Uses Howard Hinnant's civil_from_days algorithm.
+    let secs = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs() as i64;
+
+    let z = secs / 86400 + 719468;
+    let era = (if z >= 0 { z } else { z - 146096 }) / 146097;
+    let doe = (z - era * 146097) as u32;
+    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
+    let y = yoe as i64 + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    let y = if m <= 2 { y + 1 } else { y };
+
+    format!("{y:04}-{m:02}-{d:02}")
 }
 
 #[cfg(test)]
@@ -617,7 +734,7 @@ mod tests {
             Ok(self.commits.clone())
         }
 
-        fn create_tag(&self, name: &str, _message: &str) -> Result<(), ReleaseError> {
+        fn create_tag(&self, name: &str, _message: &str, _sign: bool) -> Result<(), ReleaseError> {
             self.created_tags.lock().unwrap().push(name.to_string());
             Ok(())
         }
@@ -668,7 +785,12 @@ mod tests {
             Ok("2026-01-01".into())
         }
 
-        fn force_create_tag(&self, name: &str, _message: &str) -> Result<(), ReleaseError> {
+        fn force_create_tag(
+            &self,
+            name: &str,
+            _message: &str,
+            _sign: bool,
+        ) -> Result<(), ReleaseError> {
             self.force_created_tags
                 .lock()
                 .unwrap()
@@ -712,6 +834,7 @@ mod tests {
             _name: &str,
             body: &str,
             _prerelease: bool,
+            _draft: bool,
         ) -> Result<String, ReleaseError> {
             self.releases
                 .lock()
@@ -1084,9 +1207,17 @@ mod tests {
         let uploaded = s.vcs.as_ref().unwrap().uploaded_assets.lock().unwrap();
         assert_eq!(uploaded.len(), 1);
         assert_eq!(uploaded[0].0, "v0.1.0");
-        assert_eq!(uploaded[0].1.len(), 2);
+        // 2 artifacts + 2 SHA256 checksum sidecar files
+        assert_eq!(uploaded[0].1.len(), 4);
         assert!(uploaded[0].1.iter().any(|f| f.ends_with("app.tar.gz")));
         assert!(uploaded[0].1.iter().any(|f| f.ends_with("app.zip")));
+        assert!(
+            uploaded[0]
+                .1
+                .iter()
+                .any(|f| f.ends_with("app.tar.gz.sha256"))
+        );
+        assert!(uploaded[0].1.iter().any(|f| f.ends_with("app.zip.sha256")));
     }
 
     #[test]

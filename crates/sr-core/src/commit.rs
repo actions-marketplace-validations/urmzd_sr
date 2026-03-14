@@ -179,6 +179,18 @@ impl CommitParser for DefaultCommitParser {
             .map(|x| x.1)
             .map(|b| b.to_string());
 
+        // Detect BREAKING CHANGE / BREAKING-CHANGE footers in the body
+        let breaking = breaking
+            || body.as_deref().is_some_and(|b| {
+                b.lines().any(|line| {
+                    let trimmed = line.trim();
+                    trimmed.starts_with("BREAKING CHANGE:")
+                        || trimmed.starts_with("BREAKING CHANGE ")
+                        || trimmed.starts_with("BREAKING-CHANGE:")
+                        || trimmed.starts_with("BREAKING-CHANGE ")
+                })
+            });
+
         Ok(ConventionalCommit {
             sha: commit.sha.clone(),
             r#type,
@@ -231,6 +243,45 @@ mod tests {
             .parse(&raw("fix: x\n\ndetails"))
             .unwrap();
         assert_eq!(result.body.as_deref(), Some("details"));
+    }
+
+    #[test]
+    fn parse_breaking_change_footer() {
+        let result = DefaultCommitParser
+            .parse(&raw(
+                "feat: new API\n\nBREAKING CHANGE: removed old endpoint",
+            ))
+            .unwrap();
+        assert!(result.breaking);
+        assert_eq!(result.r#type, "feat");
+    }
+
+    #[test]
+    fn parse_breaking_change_hyphenated_footer() {
+        let result = DefaultCommitParser
+            .parse(&raw("fix: update schema\n\nBREAKING-CHANGE: field renamed"))
+            .unwrap();
+        assert!(result.breaking);
+    }
+
+    #[test]
+    fn parse_breaking_change_footer_with_bang() {
+        // Both bang and footer — should still be breaking
+        let result = DefaultCommitParser
+            .parse(&raw(
+                "feat!: overhaul\n\nBREAKING CHANGE: everything changed",
+            ))
+            .unwrap();
+        assert!(result.breaking);
+    }
+
+    #[test]
+    fn parse_no_breaking_change_in_body() {
+        // Body text that mentions "BREAKING CHANGE" but not as a footer line
+        let result = DefaultCommitParser
+            .parse(&raw("fix: tweak\n\nThis is not a BREAKING CHANGE footer"))
+            .unwrap();
+        assert!(!result.breaking);
     }
 
     #[test]

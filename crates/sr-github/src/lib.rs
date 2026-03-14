@@ -73,6 +73,7 @@ impl VcsProvider for GitHubProvider {
         name: &str,
         body: &str,
         prerelease: bool,
+        draft: bool,
     ) -> Result<String, ReleaseError> {
         let url = format!(
             "{}/repos/{}/{}/releases",
@@ -85,6 +86,8 @@ impl VcsProvider for GitHubProvider {
             "name": name,
             "body": body,
             "prerelease": prerelease,
+            "draft": draft,
+            "target_commitish": tag,
         });
 
         let resp = self
@@ -155,6 +158,44 @@ impl VcsProvider for GitHubProvider {
         Ok(())
     }
 
+    fn update_release(
+        &self,
+        tag: &str,
+        name: &str,
+        body: &str,
+        prerelease: bool,
+        draft: bool,
+    ) -> Result<String, ReleaseError> {
+        let release = self.get_release_by_tag(tag)?;
+        let url = format!(
+            "{}/repos/{}/{}/releases/{}",
+            self.api_url(),
+            self.owner,
+            self.repo,
+            release.id
+        );
+        let payload = serde_json::json!({
+            "name": name,
+            "body": body,
+            "prerelease": prerelease,
+            "draft": draft,
+        });
+        let resp = self
+            .agent()
+            .patch(&url)
+            .header("Authorization", &format!("Bearer {}", self.token))
+            .header("Accept", "application/vnd.github+json")
+            .header("X-GitHub-Api-Version", "2022-11-28")
+            .header("User-Agent", "sr-github")
+            .send_json(&payload)
+            .map_err(|e| ReleaseError::Vcs(format!("GitHub API PATCH {url}: {e}")))?;
+        let updated: ReleaseResponse = resp
+            .into_body()
+            .read_json()
+            .map_err(|e| ReleaseError::Vcs(format!("failed to parse release response: {e}")))?;
+        Ok(updated.html_url)
+    }
+
     fn upload_assets(&self, tag: &str, files: &[&str]) -> Result<(), ReleaseError> {
         let release = self.get_release_by_tag(tag)?;
         // The upload_url from the API looks like:
@@ -176,21 +217,72 @@ impl VcsProvider for GitHubProvider {
             let data = std::fs::read(path)
                 .map_err(|e| ReleaseError::Vcs(format!("failed to read asset {file_path}: {e}")))?;
 
+            let content_type = mime_from_extension(file_name);
             let url = format!("{upload_base}?name={file_name}");
-            self.agent()
-                .post(&url)
-                .header("Authorization", &format!("Bearer {}", self.token))
-                .header("Accept", "application/vnd.github+json")
-                .header("X-GitHub-Api-Version", "2022-11-28")
-                .header("User-Agent", "sr-github")
-                .header("Content-Type", "application/octet-stream")
-                .send(&data[..])
-                .map_err(|e| {
-                    ReleaseError::Vcs(format!("GitHub API upload asset {file_name}: {e}"))
-                })?;
+
+            // Retry up to 3 times for transient upload failures
+            let mut last_err = None;
+            for attempt in 0..3 {
+                if attempt > 0 {
+                    std::thread::sleep(std::time::Duration::from_secs(1 << attempt));
+                    eprintln!(
+                        "Retrying upload of {file_name} (attempt {}/3)...",
+                        attempt + 1
+                    );
+                }
+                match self
+                    .agent()
+                    .post(&url)
+                    .header("Authorization", &format!("Bearer {}", self.token))
+                    .header("Accept", "application/vnd.github+json")
+                    .header("X-GitHub-Api-Version", "2022-11-28")
+                    .header("User-Agent", "sr-github")
+                    .header("Content-Type", content_type)
+                    .send(&data[..])
+                {
+                    Ok(_) => {
+                        last_err = None;
+                        break;
+                    }
+                    Err(e) => {
+                        last_err = Some(format!("GitHub API upload asset {file_name}: {e}"));
+                    }
+                }
+            }
+            if let Some(err_msg) = last_err {
+                return Err(ReleaseError::Vcs(err_msg));
+            }
         }
 
         Ok(())
+    }
+
+    fn verify_release(&self, tag: &str) -> Result<(), ReleaseError> {
+        // GET the release by tag to confirm it exists and is accessible
+        self.get_release_by_tag(tag)?;
+        Ok(())
+    }
+}
+
+/// Map file extension to MIME type for GitHub asset uploads.
+fn mime_from_extension(filename: &str) -> &'static str {
+    match filename.rsplit('.').next().unwrap_or("") {
+        "gz" | "tgz" => "application/gzip",
+        "zip" => "application/zip",
+        "tar" => "application/x-tar",
+        "xz" => "application/x-xz",
+        "bz2" => "application/x-bzip2",
+        "zst" | "zstd" => "application/zstd",
+        "deb" => "application/vnd.debian.binary-package",
+        "rpm" => "application/x-rpm",
+        "dmg" => "application/x-apple-diskimage",
+        "msi" => "application/x-msi",
+        "exe" => "application/vnd.microsoft.portable-executable",
+        "sig" | "asc" => "application/pgp-signature",
+        "sha256" | "sha512" => "text/plain",
+        "json" => "application/json",
+        "txt" | "md" => "text/plain",
+        _ => "application/octet-stream",
     }
 }
 

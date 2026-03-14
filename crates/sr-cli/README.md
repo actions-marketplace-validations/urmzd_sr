@@ -69,7 +69,7 @@ sr release
 ## Prerequisites
 
 - `git` — for all repository operations
-- [`gh`](https://cli.github.com/) — for creating GitHub releases (pre-installed on GitHub Actions runners)
+- `GH_TOKEN` or `GITHUB_TOKEN` — for creating GitHub releases (set automatically on GitHub Actions runners)
 
 ## License
 

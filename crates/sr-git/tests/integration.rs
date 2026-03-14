@@ -103,7 +103,7 @@ fn commits_since_partial() {
 #[test]
 fn create_tag_exists() {
     let (dir, repo) = init_repo();
-    repo.create_tag("v1.0.0", "release v1.0.0").unwrap();
+    repo.create_tag("v1.0.0", "release v1.0.0", false).unwrap();
 
     let tags = git_in(&dir, &["tag", "-l"]);
     assert!(tags.contains("v1.0.0"));

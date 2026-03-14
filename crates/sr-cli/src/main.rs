@@ -54,6 +54,14 @@ enum Commands {
         /// Pre-release identifier (e.g. alpha, beta, rc). Produces versions like 1.2.0-alpha.1
         #[arg(long)]
         prerelease: Option<String>,
+
+        /// Sign tags with GPG/SSH (git tag -s)
+        #[arg(long)]
+        sign_tags: bool,
+
+        /// Create GitHub release as a draft (requires manual publishing)
+        #[arg(long)]
+        draft: bool,
     },
 
     /// Show what the next release would look like
@@ -118,6 +126,7 @@ impl VcsProvider for NoopVcsProvider {
         _name: &str,
         _body: &str,
         _prerelease: bool,
+        _draft: bool,
     ) -> Result<String, sr_core::error::ReleaseError> {
         Ok(String::new())
     }
@@ -482,6 +491,8 @@ fn run() -> anyhow::Result<()> {
             pre_release_command,
             post_release_command,
             prerelease,
+            sign_tags,
+            draft,
         } => {
             let mut config = ReleaseConfig::load(Path::new(DEFAULT_CONFIG_FILE))?;
             config.artifacts.extend(artifacts);
@@ -497,6 +508,12 @@ fn run() -> anyhow::Result<()> {
             }
             if prerelease.is_some() {
                 config.prerelease = prerelease;
+            }
+            if sign_tags {
+                config.sign_tags = true;
+            }
+            if draft {
+                config.draft = true;
             }
 
             // Try to build with GitHub; fall back to local-only if no token
