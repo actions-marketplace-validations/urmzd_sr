@@ -1,5 +1,18 @@
 # Changelog
 
+## 1.6.0 (2026-03-14)
+
+### Features
+
+- improve release cycle with signing, drafts, checksums, PATCH updates, and more ([a23a210](https://github.com/urmzd/semantic-release/commit/a23a210fea1111e5d80b9bc2d869741f1a1611dd))
+
+### Documentation
+
+- add AGENTS.md and agent skill for Claude Code ([3ad54b0](https://github.com/urmzd/semantic-release/commit/3ad54b08888edfa6120af085f2d6b8c0703ed9c8))
+
+[Full Changelog](https://github.com/urmzd/semantic-release/compare/v1.5.1...v1.6.0)
+
+
 ## 1.5.1 (2026-03-10)
 
 ### Bug Fixes
