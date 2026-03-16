@@ -1,6 +1,6 @@
 # sr-cli
 
-The CLI binary for [sr](https://github.com/urmzd/semantic-release) — a single-binary, zero-dependency semantic release tool.
+The CLI binary for [sr](https://github.com/urmzd/sr) — a single-binary, zero-dependency semantic release tool.
 
 [![crates.io](https://img.shields.io/crates/v/sr-cli.svg)](https://crates.io/crates/sr-cli)
 
@@ -20,7 +20,7 @@ cargo install --path crates/sr-cli
 
 ### Binary download
 
-Pre-built binaries are available on the [releases page](https://github.com/urmzd/semantic-release/releases).
+Pre-built binaries are available on the [releases page](https://github.com/urmzd/sr/releases).
 
 ## Quick Start
 
@@ -64,7 +64,7 @@ sr release
 
 ## Configuration
 
-`sr` reads `sr.yaml` from the repository root. See the [root README](https://github.com/urmzd/semantic-release#configuration) for full configuration documentation.
+`sr` reads `sr.yaml` from the repository root. See the [root README](https://github.com/urmzd/sr#configuration) for full configuration documentation.
 
 ## Prerequisites
 

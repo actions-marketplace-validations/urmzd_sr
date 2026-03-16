@@ -1,6 +1,6 @@
 # sr-core
 
-Pure domain logic for [sr](https://github.com/urmzd/semantic-release) — a single-binary semantic release tool.
+Pure domain logic for [sr](https://github.com/urmzd/sr) — a single-binary semantic release tool.
 
 [![crates.io](https://img.shields.io/crates/v/sr-core.svg)](https://crates.io/crates/sr-core)
 

@@ -292,7 +292,7 @@ mod tests {
     fn github_com_provider() -> GitHubProvider {
         GitHubProvider::new(
             "urmzd".into(),
-            "semantic-release".into(),
+            "sr".into(),
             "github.com".into(),
             "test-token".into(),
         )
@@ -321,7 +321,7 @@ mod tests {
     fn test_base_url() {
         assert_eq!(
             github_com_provider().base_url(),
-            "https://github.com/urmzd/semantic-release"
+            "https://github.com/urmzd/sr"
         );
         assert_eq!(
             ghes_provider().base_url(),
@@ -334,7 +334,7 @@ mod tests {
         let p = github_com_provider();
         assert_eq!(
             p.compare_url("v0.9.0", "v1.0.0").unwrap(),
-            "https://github.com/urmzd/semantic-release/compare/v0.9.0...v1.0.0"
+            "https://github.com/urmzd/sr/compare/v0.9.0...v1.0.0"
         );
     }
 
@@ -342,7 +342,7 @@ mod tests {
     fn test_repo_url() {
         assert_eq!(
             github_com_provider().repo_url().unwrap(),
-            "https://github.com/urmzd/semantic-release"
+            "https://github.com/urmzd/sr"
         );
     }
 }

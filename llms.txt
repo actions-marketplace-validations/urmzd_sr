@@ -4,21 +4,21 @@
 
 ## Docs
 
-- [README](https://github.com/urmzd/semantic-release/blob/main/README.md): Installation, CLI reference, configuration, and GitHub Action usage
-- [AGENTS.md](https://github.com/urmzd/semantic-release/blob/main/AGENTS.md): Architecture and development guide
-- [CHANGELOG](https://github.com/urmzd/semantic-release/blob/main/CHANGELOG.md): Version history
+- [README](https://github.com/urmzd/sr/blob/main/README.md): Installation, CLI reference, configuration, and GitHub Action usage
+- [AGENTS.md](https://github.com/urmzd/sr/blob/main/AGENTS.md): Architecture and development guide
+- [CHANGELOG](https://github.com/urmzd/sr/blob/main/CHANGELOG.md): Version history
 
 ## API / Key Files
 
-- [crates/sr-core/src/release.rs](https://github.com/urmzd/semantic-release/blob/main/crates/sr-core/src/release.rs): Release orchestration (plan + execute)
-- [crates/sr-core/src/config.rs](https://github.com/urmzd/semantic-release/blob/main/crates/sr-core/src/config.rs): YAML config parsing and defaults
-- [crates/sr-core/src/commit.rs](https://github.com/urmzd/semantic-release/blob/main/crates/sr-core/src/commit.rs): Conventional commit parsing
-- [crates/sr-core/src/changelog.rs](https://github.com/urmzd/semantic-release/blob/main/crates/sr-core/src/changelog.rs): Changelog generation with minijinja templates
-- [crates/sr-core/src/version_files.rs](https://github.com/urmzd/semantic-release/blob/main/crates/sr-core/src/version_files.rs): Multi-language version file bumping
-- [crates/sr-github/src/lib.rs](https://github.com/urmzd/semantic-release/blob/main/crates/sr-github/src/lib.rs): GitHub REST API provider
-- [crates/sr-cli/src/main.rs](https://github.com/urmzd/semantic-release/blob/main/crates/sr-cli/src/main.rs): CLI entry point
+- [crates/sr-core/src/release.rs](https://github.com/urmzd/sr/blob/main/crates/sr-core/src/release.rs): Release orchestration (plan + execute)
+- [crates/sr-core/src/config.rs](https://github.com/urmzd/sr/blob/main/crates/sr-core/src/config.rs): YAML config parsing and defaults
+- [crates/sr-core/src/commit.rs](https://github.com/urmzd/sr/blob/main/crates/sr-core/src/commit.rs): Conventional commit parsing
+- [crates/sr-core/src/changelog.rs](https://github.com/urmzd/sr/blob/main/crates/sr-core/src/changelog.rs): Changelog generation with minijinja templates
+- [crates/sr-core/src/version_files.rs](https://github.com/urmzd/sr/blob/main/crates/sr-core/src/version_files.rs): Multi-language version file bumping
+- [crates/sr-github/src/lib.rs](https://github.com/urmzd/sr/blob/main/crates/sr-github/src/lib.rs): GitHub REST API provider
+- [crates/sr-cli/src/main.rs](https://github.com/urmzd/sr/blob/main/crates/sr-cli/src/main.rs): CLI entry point
 
 ## Optional
 
-- [CONTRIBUTING](https://github.com/urmzd/semantic-release/blob/main/CONTRIBUTING.md): How to contribute
-- [Skill](https://github.com/urmzd/semantic-release/blob/main/skills/semantic-release/SKILL.md): Agent skill for planning and executing releases
+- [CONTRIBUTING](https://github.com/urmzd/sr/blob/main/CONTRIBUTING.md): How to contribute
+- [Skill](https://github.com/urmzd/sr/blob/main/skills/sr/SKILL.md): Agent skill for planning and executing releases

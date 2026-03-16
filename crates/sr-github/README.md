@@ -1,6 +1,6 @@
 # sr-github
 
-GitHub VCS provider for [sr](https://github.com/urmzd/semantic-release) — backed by the GitHub REST API.
+GitHub VCS provider for [sr](https://github.com/urmzd/sr) — backed by the GitHub REST API.
 
 [![crates.io](https://img.shields.io/crates/v/sr-github.svg)](https://crates.io/crates/sr-github)
 
@@ -23,7 +23,7 @@ use sr_core::release::VcsProvider;
 
 let provider = GitHubProvider::new(
     "urmzd".into(),
-    "semantic-release".into(),
+    "sr".into(),
     "github.com".into(),
     std::env::var("GH_TOKEN").unwrap(),
 );
@@ -42,7 +42,7 @@ let exists = provider.release_exists("v1.0.0")?;
 
 // Generate a compare URL
 let url = provider.compare_url("v0.9.0", "v1.0.0")?;
-// -> "https://github.com/urmzd/semantic-release/compare/v0.9.0...v1.0.0"
+// -> "https://github.com/urmzd/sr/compare/v0.9.0...v1.0.0"
 ```
 
 ## API

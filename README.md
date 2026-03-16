@@ -3,16 +3,16 @@
   <p align="center">
     A single-binary, zero-dependency semantic release tool for any language.
     <br /><br />
-    <a href="https://github.com/urmzd/semantic-release/releases">Download</a>
+    <a href="https://github.com/urmzd/sr/releases">Download</a>
     &middot;
-    <a href="https://github.com/urmzd/semantic-release/issues">Report Bug</a>
+    <a href="https://github.com/urmzd/sr/issues">Report Bug</a>
     &middot;
-    <a href="https://github.com/urmzd/semantic-release/blob/main/action.yml">GitHub Action</a>
+    <a href="https://github.com/urmzd/sr/blob/main/action.yml">GitHub Action</a>
   </p>
 </p>
 
 <p align="center">
-  <a href="https://github.com/urmzd/semantic-release/actions/workflows/ci.yml"><img src="https://github.com/urmzd/semantic-release/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="https://github.com/urmzd/sr/actions/workflows/ci.yml"><img src="https://github.com/urmzd/sr/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
 </p>
 
 ## Why?
@@ -49,7 +49,7 @@ The npm `semantic-release` ecosystem is battle-tested but comes with friction:
 ### Shell installer (Linux/macOS)
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/urmzd/semantic-release/main/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/urmzd/sr/main/install.sh | sh
 ```
 
 The installer automatically adds `~/.local/bin` to your `PATH` in your shell profile (`.zshrc`, `.bashrc`, or `config.fish`).
@@ -57,7 +57,7 @@ The installer automatically adds `~/.local/bin` to your `PATH` in your shell pro
 ### GitHub Action (recommended)
 
 ```yaml
-- uses: urmzd/semantic-release@v1
+- uses: urmzd/sr@v1
   with:
     github-token: ${{ secrets.GITHUB_TOKEN }}
 ```
@@ -81,13 +81,13 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      - uses: urmzd/semantic-release@v1
+      - uses: urmzd/sr@v1
 ```
 
 Dry-run on pull requests:
 
 ```yaml
-      - uses: urmzd/semantic-release@v1
+      - uses: urmzd/sr@v1
         with:
           command: release
           dry-run: "true"
@@ -96,7 +96,7 @@ Dry-run on pull requests:
 Use outputs in subsequent steps:
 
 ```yaml
-      - uses: urmzd/semantic-release@v1
+      - uses: urmzd/sr@v1
         id: sr
       - if: steps.sr.outputs.released == 'true'
         run: echo "Released ${{ steps.sr.outputs.version }}"
@@ -111,7 +111,7 @@ Upload artifacts to the release:
           path: release-assets
           merge-multiple: true
 
-      - uses: urmzd/semantic-release@v1
+      - uses: urmzd/sr@v1
         with:
           artifacts: "release-assets/*"
 ```
@@ -121,7 +121,7 @@ The `artifacts` input accepts glob patterns (newline or comma separated). All ma
 Run a build step between version bump and commit (useful for lock files, codegen, etc.):
 
 ```yaml
-      - uses: urmzd/semantic-release@v1
+      - uses: urmzd/sr@v1
         with:
           build-command: "cargo build --release"
 ```
@@ -151,7 +151,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      - uses: urmzd/semantic-release@v1
+      - uses: urmzd/sr@v1
         with:
           force: ${{ github.event.inputs.force || 'false' }}
 ```
@@ -165,8 +165,8 @@ jobs:
 | `force` | Re-release the current tag (use when a previous release partially failed) | `false` |
 | `config` | Path to the config file | `sr.yaml` |
 | `github-token` | GitHub token for creating releases | `${{ github.token }}` |
-| `git-user-name` | Git user name for tag creation | `semantic-release[bot]` |
-| `git-user-email` | Git user email for tag creation | `semantic-release[bot]@urmzd.com` |
+| `git-user-name` | Git user name for tag creation | `sr[bot]` |
+| `git-user-email` | Git user email for tag creation | `sr[bot]@urmzd.com` |
 | `artifacts` | Glob patterns for artifact files to upload (newline or comma separated) | `""` |
 | `build-command` | Shell command to run after version bump, before commit (`SR_VERSION` and `SR_TAG` env vars available) | `""` |
 
@@ -186,7 +186,7 @@ jobs:
 ### Binary download
 
 Download the latest release for your platform from
-[Releases](https://github.com/urmzd/semantic-release/releases):
+[Releases](https://github.com/urmzd/sr/releases):
 
 | Target | File |
 |--------|------|
@@ -272,7 +272,7 @@ sr completions bash >> ~/.bashrc
 
 ```bash
 # Copy the hook into your project
-curl -o .githooks/commit-msg https://raw.githubusercontent.com/urmzd/semantic-release/main/.githooks/commit-msg
+curl -o .githooks/commit-msg https://raw.githubusercontent.com/urmzd/sr/main/.githooks/commit-msg
 chmod +x .githooks/commit-msg
 git config core.hooksPath .githooks/
 ```
@@ -282,7 +282,7 @@ git config core.hooksPath .githooks/
 ```yaml
 # .pre-commit-config.yaml
 repos:
-  - repo: https://github.com/urmzd/semantic-release
+  - repo: https://github.com/urmzd/sr
     rev: v0.5.0
     hooks:
       - id: conventional-commit-msg
@@ -316,7 +316,7 @@ commit (hook validates) → push → sr plan (preview) → sr release (execute)
 Use the action outputs to run steps conditionally:
 
 ```yaml
-- uses: urmzd/semantic-release@v1
+- uses: urmzd/sr@v1
   id: sr
 - if: steps.sr.outputs.released == 'true'
   run: ./deploy.sh ${{ steps.sr.outputs.version }}
@@ -730,10 +730,10 @@ This project ships an [Agent Skill](https://github.com/vercel-labs/skills) for u
 **Install:**
 
 ```sh
-npx skills add urmzd/semantic-release
+npx skills add urmzd/sr
 ```
 
-Once installed, use `/semantic-release` to plan, dry-run, or execute releases from conventional commits.
+Once installed, use `/sr` to plan, dry-run, or execute releases from conventional commits.
 
 ## Contributing
 

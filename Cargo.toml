@@ -6,9 +6,9 @@ resolver = "2"
 version = "1.7.1"
 edition = "2024"
 license = "Apache-2.0"
-repository = "https://github.com/urmzd/semantic-release"
+repository = "https://github.com/urmzd/sr"
 authors = ["urmzd"]
-homepage = "https://github.com/urmzd/semantic-release"
+homepage = "https://github.com/urmzd/sr"
 
 [workspace.dependencies]
 # Internal crates

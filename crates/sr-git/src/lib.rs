@@ -315,42 +315,39 @@ mod tests {
 
     #[test]
     fn parse_ssh_remote() {
-        let (owner, repo) = parse_owner_repo("git@github.com:urmzd/semantic-release.git").unwrap();
+        let (owner, repo) = parse_owner_repo("git@github.com:urmzd/sr.git").unwrap();
         assert_eq!(owner, "urmzd");
-        assert_eq!(repo, "semantic-release");
+        assert_eq!(repo, "sr");
     }
 
     #[test]
     fn parse_https_remote() {
-        let (owner, repo) =
-            parse_owner_repo("https://github.com/urmzd/semantic-release.git").unwrap();
+        let (owner, repo) = parse_owner_repo("https://github.com/urmzd/sr.git").unwrap();
         assert_eq!(owner, "urmzd");
-        assert_eq!(repo, "semantic-release");
+        assert_eq!(repo, "sr");
     }
 
     #[test]
     fn parse_https_no_git_suffix() {
-        let (owner, repo) = parse_owner_repo("https://github.com/urmzd/semantic-release").unwrap();
+        let (owner, repo) = parse_owner_repo("https://github.com/urmzd/sr").unwrap();
         assert_eq!(owner, "urmzd");
-        assert_eq!(repo, "semantic-release");
+        assert_eq!(repo, "sr");
     }
 
     #[test]
     fn parse_remote_url_github_https() {
-        let (host, owner, repo) =
-            parse_remote_url("https://github.com/urmzd/semantic-release.git").unwrap();
+        let (host, owner, repo) = parse_remote_url("https://github.com/urmzd/sr.git").unwrap();
         assert_eq!(host, "github.com");
         assert_eq!(owner, "urmzd");
-        assert_eq!(repo, "semantic-release");
+        assert_eq!(repo, "sr");
     }
 
     #[test]
     fn parse_remote_url_github_ssh() {
-        let (host, owner, repo) =
-            parse_remote_url("git@github.com:urmzd/semantic-release.git").unwrap();
+        let (host, owner, repo) = parse_remote_url("git@github.com:urmzd/sr.git").unwrap();
         assert_eq!(host, "github.com");
         assert_eq!(owner, "urmzd");
-        assert_eq!(repo, "semantic-release");
+        assert_eq!(repo, "sr");
     }
 
     #[test]
@@ -372,11 +369,10 @@ mod tests {
 
     #[test]
     fn parse_remote_url_no_git_suffix() {
-        let (host, owner, repo) =
-            parse_remote_url("https://github.com/urmzd/semantic-release").unwrap();
+        let (host, owner, repo) = parse_remote_url("https://github.com/urmzd/sr").unwrap();
         assert_eq!(host, "github.com");
         assert_eq!(owner, "urmzd");
-        assert_eq!(repo, "semantic-release");
+        assert_eq!(repo, "sr");
     }
 
     #[test]

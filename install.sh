@@ -2,7 +2,7 @@
 # install.sh — Installs the sr binary from GitHub releases.
 #
 # Usage:
-#   curl -fsSL https://raw.githubusercontent.com/urmzd/semantic-release/main/install.sh | sh
+#   curl -fsSL https://raw.githubusercontent.com/urmzd/sr/main/install.sh | sh
 #
 # Environment variables:
 #   SR_VERSION     — version to install (e.g. "v1.2.0"); defaults to latest
@@ -10,7 +10,7 @@
 
 set -eu
 
-REPO="urmzd/semantic-release"
+REPO="urmzd/sr"
 
 main() {
     os=$(uname -s)

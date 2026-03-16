@@ -1,5 +1,5 @@
 ---
-name: semantic-release
+name: sr
 description: Perform semantic releases with sr — version bumping, changelog generation, and GitHub releases from conventional commits. Use when releasing software, managing versions, or generating changelogs.
 argument-hint: [command]
 ---

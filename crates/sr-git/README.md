@@ -1,6 +1,6 @@
 # sr-git
 
-Git operations for [sr](https://github.com/urmzd/semantic-release) — backed by the native `git` CLI.
+Git operations for [sr](https://github.com/urmzd/sr) — backed by the native `git` CLI.
 
 [![crates.io](https://img.shields.io/crates/v/sr-git.svg)](https://crates.io/crates/sr-git)
 
@@ -35,13 +35,13 @@ let commits = repo.commits_since(tag.as_ref().map(|t| t.name.as_str()))?;
 use sr_git::parse_owner_repo;
 
 // Supports both SSH and HTTPS formats
-let (owner, repo) = parse_owner_repo("git@github.com:urmzd/semantic-release.git")?;
+let (owner, repo) = parse_owner_repo("git@github.com:urmzd/sr.git")?;
 assert_eq!(owner, "urmzd");
-assert_eq!(repo, "semantic-release");
+assert_eq!(repo, "sr");
 
-let (owner, repo) = parse_owner_repo("https://github.com/urmzd/semantic-release.git")?;
+let (owner, repo) = parse_owner_repo("https://github.com/urmzd/sr.git")?;
 assert_eq!(owner, "urmzd");
-assert_eq!(repo, "semantic-release");
+assert_eq!(repo, "sr");
 ```
 
 ## API

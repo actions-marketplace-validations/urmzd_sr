@@ -10,8 +10,8 @@
 ## Getting Started
 
 ```bash
-git clone https://github.com/urmzd/semantic-release.git
-cd semantic-release
+git clone https://github.com/urmzd/sr.git
+cd sr
 just init    # Install clippy + rustfmt
 just check   # Run all checks (format, lint, test)
 ```
@@ -46,7 +46,7 @@ If you use the [pre-commit](https://pre-commit.com/) framework, add to your `.pr
 
 ```yaml
 repos:
-  - repo: https://github.com/urmzd/semantic-release
+  - repo: https://github.com/urmzd/sr
     rev: v0.5.0
     hooks:
       - id: conventional-commit-msg

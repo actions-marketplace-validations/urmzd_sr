@@ -30,11 +30,11 @@ inputs:
   git-user-name:
     description: "Git user name for tag creation"
     required: false
-    default: "semantic-release[bot]"
+    default: "sr[bot]"
   git-user-email:
     description: "Git user email for tag creation"
     required: false
-    default: "semantic-release[bot]@urmzd.com"
+    default: "sr[bot]@urmzd.com"
   artifacts:
     description: "Glob patterns for artifact files to upload (newline or comma separated)"
     required: false
@@ -102,7 +102,7 @@ runs:
         esac
 
         BINARY_NAME="sr-${TARGET}"
-        DOWNLOAD_URL="https://github.com/urmzd/semantic-release/releases/latest/download/${BINARY_NAME}"
+        DOWNLOAD_URL="https://github.com/urmzd/sr/releases/latest/download/${BINARY_NAME}"
 
         mkdir -p "$HOME/.local/bin"
         curl -sSfL "$DOWNLOAD_URL" -o "$HOME/.local/bin/sr"
