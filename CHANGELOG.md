@@ -1,5 +1,22 @@
 # Changelog
 
+## 1.7.1 (2026-03-16)
+
+### Bug Fixes
+
+- make refactor commits trigger a patch release ([290e96e](https://github.com/urmzd/sr/commit/290e96e4d449b2b1ffead4351b2f9a06d6f0ed65))
+
+### Refactoring
+
+- rename config to sr.yaml, remove toml/json support ([ad1c6f2](https://github.com/urmzd/sr/commit/ad1c6f2e0b861aa1c670f96b717784e26c5a91d1))
+
+### Miscellaneous
+
+- standardize project files and README header ([415e32c](https://github.com/urmzd/sr/commit/415e32c9f43fc4b22eddfc8b0e03502f0b89fe78))
+
+[Full Changelog](https://github.com/urmzd/sr/compare/v1.7.0...v1.7.1)
+
+
 ## 1.7.0 (2026-03-14)
 
 ### Features
