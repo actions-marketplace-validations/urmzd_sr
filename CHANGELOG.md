@@ -1,5 +1,18 @@
 # Changelog
 
+## 1.11.0 (2026-03-20)
+
+### Features
+
+- **core**: add monorepo support with per-package releases ([6b56089](https://github.com/urmzd/sr/commit/6b56089d3d0bd2576e19ff62f29156aef7a795e7))
+
+### Documentation
+
+- add monorepo support documentation ([ef78791](https://github.com/urmzd/sr/commit/ef78791d1a509b0bf5eefb306a3f88c9661d1820))
+
+[Full Changelog](https://github.com/urmzd/sr/compare/v1.10.0...v1.11.0)
+
+
 ## 1.10.0 (2026-03-20)
 
 ### Features
