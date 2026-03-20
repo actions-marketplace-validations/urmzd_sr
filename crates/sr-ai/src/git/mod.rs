@@ -1,4 +1,5 @@
 use anyhow::{Context, Result, bail};
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::process::Command;
 
@@ -183,5 +184,36 @@ impl GitRepo {
     pub fn current_branch(&self) -> Result<String> {
         let out = self.git(&["rev-parse", "--abbrev-ref", "HEAD"])?;
         Ok(out.trim().to_string())
+    }
+
+    pub fn head_short(&self) -> Result<String> {
+        let out = self.git(&["rev-parse", "--short", "HEAD"])?;
+        Ok(out.trim().to_string())
+    }
+
+    pub fn file_statuses(&self) -> Result<HashMap<String, char>> {
+        let out = self.git(&["status", "--porcelain"])?;
+        let mut map = HashMap::new();
+        for line in out.lines() {
+            if line.len() < 3 {
+                continue;
+            }
+            let xy = &line.as_bytes()[..2];
+            let mut path = line[3..].to_string();
+            if let Some(pos) = path.find(" -> ") {
+                path = path[pos + 4..].to_string();
+            }
+            let (x, y) = (xy[0], xy[1]);
+            let status = match (x, y) {
+                (b'?', b'?') => 'A',
+                (b'A', _) | (_, b'A') => 'A',
+                (b'D', _) | (_, b'D') => 'D',
+                (b'R', _) | (_, b'R') => 'R',
+                (b'M', _) | (_, b'M') | (b'T', _) | (_, b'T') => 'M',
+                _ => '~',
+            };
+            map.insert(path, status);
+        }
+        Ok(map)
     }
 }
