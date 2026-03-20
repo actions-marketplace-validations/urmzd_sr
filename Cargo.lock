@@ -1102,6 +1102,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2",
+ "sr-core",
  "thiserror",
  "tokio",
 ]
