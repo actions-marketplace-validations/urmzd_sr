@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.13.0 (2026-03-20)
+
+### Features
+
+- **release**: auto-stage lock files after version bump ([8a71452](https://github.com/urmzd/sr/commit/8a71452db9979f2981b5b75ec24c29fc279d9596))
+
+[Full Changelog](https://github.com/urmzd/sr/compare/v1.12.0...v1.13.0)
+
+
 ## 1.12.0 (2026-03-20)
 
 ### Features
