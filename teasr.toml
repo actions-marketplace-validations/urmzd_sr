@@ -1,11 +1,27 @@
 [output]
 dir = "./showcase"
-formats = ["png"]
+
+[[output.formats]]
+output_type = "png"
+
+[[output.formats]]
+output_type = "gif"
 
 [[scenes]]
 type = "terminal"
-command = "sr plan"
-name = "sr-plan"
+name = "sr-commit"
 theme = "dracula"
-cols = 100
-maxLines = 40
+cols = 110
+rows = 40
+cwd = "."
+
+[[scenes.interactions]]
+type = "type"
+text = "sr commit --dry-run"
+speed = 50
+[[scenes.interactions]]
+type = "key"
+key = "enter"
+[[scenes.interactions]]
+type = "wait"
+duration = 15000
