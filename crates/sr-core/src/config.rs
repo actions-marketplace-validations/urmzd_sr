@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 use crate::commit::{CommitType, DEFAULT_COMMIT_PATTERN, default_commit_types};
 use crate::error::ReleaseError;
 use crate::version::BumpLevel;
+use crate::version_files::detect_version_files;
 
 /// Preferred config file name for new projects.
 pub const DEFAULT_CONFIG_FILE: &str = "sr.yaml";
@@ -197,6 +198,15 @@ impl ReleaseConfig {
         config.path_filter = Some(pkg.path.clone());
         if !pkg.version_files.is_empty() {
             config.version_files = pkg.version_files.clone();
+        } else if config.version_files.is_empty() {
+            // Auto-detect version files in the package directory
+            let detected = detect_version_files(Path::new(&pkg.path));
+            if !detected.is_empty() {
+                config.version_files = detected
+                    .into_iter()
+                    .map(|f| format!("{}/{f}", pkg.path))
+                    .collect();
+            }
         }
         if let Some(ref cl) = pkg.changelog {
             config.changelog = cl.clone();

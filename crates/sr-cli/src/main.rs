@@ -319,13 +319,19 @@ fn is_no_release_error(err: &anyhow::Error) -> bool {
 /// Load config and optionally resolve a package, returning the effective config.
 fn load_config_for_package(package: Option<&str>) -> anyhow::Result<ReleaseConfig> {
     let config_path = resolve_config_path();
-    let config = ReleaseConfig::load(&config_path)?;
+    let mut config = ReleaseConfig::load(&config_path)?;
     match package {
         Some(name) => {
             let pkg = config.find_package(name)?;
             Ok(config.resolve_package(pkg))
         }
-        None => Ok(config),
+        None => {
+            // Auto-detect version files if none configured
+            if config.version_files.is_empty() {
+                config.version_files = sr_core::version_files::detect_version_files(Path::new("."));
+            }
+            Ok(config)
+        }
     }
 }
 
@@ -611,7 +617,17 @@ async fn run() -> anyhow::Result<()> {
                 anyhow::bail!("{DEFAULT_CONFIG_FILE} already exists (use --force to overwrite)");
             }
 
-            let config = ReleaseConfig::default();
+            let mut config = ReleaseConfig::default();
+
+            // Auto-detect version files in the current directory
+            let detected = sr_core::version_files::detect_version_files(Path::new("."));
+            if !detected.is_empty() {
+                for f in &detected {
+                    eprintln!("detected version file: {f}");
+                }
+                config.version_files = detected;
+            }
+
             let yaml = serde_yaml_ng::to_string(&config)?;
             std::fs::write(path, yaml)?;
 
