@@ -10,7 +10,7 @@ use crate::config::ReleaseConfig;
 use crate::error::ReleaseError;
 use crate::git::GitRepository;
 use crate::version::{BumpLevel, apply_bump, apply_prerelease_bump, determine_bump};
-use crate::version_files::{bump_version_file, discover_lock_files};
+use crate::version_files::{bump_version_file, discover_lock_files, is_supported_version_file};
 
 /// The computed plan for a release, before execution.
 #[derive(Debug, Serialize)]
@@ -299,16 +299,7 @@ where
                     .file_name()
                     .and_then(|n| n.to_str())
                     .unwrap_or_default();
-                let supported = matches!(
-                    filename,
-                    "Cargo.toml"
-                        | "package.json"
-                        | "pyproject.toml"
-                        | "pom.xml"
-                        | "build.gradle"
-                        | "build.gradle.kts"
-                ) || filename.ends_with(".go");
-                if supported {
+                if is_supported_version_file(filename) {
                     eprintln!("[dry-run] Would bump version in: {file}");
                 } else if self.config.version_files_strict {
                     return Err(ReleaseError::VersionBump(format!(
