@@ -5,6 +5,218 @@ use regex::Regex;
 
 use crate::error::ReleaseError;
 
+/// Trait encapsulating detection, bumping, workspace discovery, and lock file
+/// association for a single ecosystem (Cargo, npm, Python, etc.).
+pub trait VersionFileHandler: Send + Sync {
+    /// Human-readable name, e.g. "Cargo", "npm".
+    fn name(&self) -> &str;
+
+    /// Primary manifest filenames, e.g. `["Cargo.toml"]`.
+    fn manifest_names(&self) -> &[&str];
+
+    /// Associated lock file names, e.g. `["Cargo.lock"]`.
+    fn lock_file_names(&self) -> &[&str];
+
+    /// Does this ecosystem exist in `dir`? Default: any manifest file exists.
+    fn detect(&self, dir: &Path) -> bool {
+        self.manifest_names()
+            .iter()
+            .any(|name| dir.join(name).exists())
+    }
+
+    /// Bump version in the manifest at `path`. Returns additional files that
+    /// were auto-discovered and bumped (e.g. workspace members).
+    fn bump(&self, path: &Path, new_version: &str) -> Result<Vec<PathBuf>, ReleaseError>;
+}
+
+// ---------------------------------------------------------------------------
+// Handler implementations
+// ---------------------------------------------------------------------------
+
+struct CargoHandler;
+
+impl VersionFileHandler for CargoHandler {
+    fn name(&self) -> &str {
+        "Cargo"
+    }
+    fn manifest_names(&self) -> &[&str] {
+        &["Cargo.toml"]
+    }
+    fn lock_file_names(&self) -> &[&str] {
+        &["Cargo.lock"]
+    }
+    fn bump(&self, path: &Path, new_version: &str) -> Result<Vec<PathBuf>, ReleaseError> {
+        bump_cargo_toml(path, new_version)
+    }
+}
+
+struct NpmHandler;
+
+impl VersionFileHandler for NpmHandler {
+    fn name(&self) -> &str {
+        "npm"
+    }
+    fn manifest_names(&self) -> &[&str] {
+        &["package.json"]
+    }
+    fn lock_file_names(&self) -> &[&str] {
+        &["package-lock.json", "yarn.lock", "pnpm-lock.yaml"]
+    }
+    fn bump(&self, path: &Path, new_version: &str) -> Result<Vec<PathBuf>, ReleaseError> {
+        bump_package_json(path, new_version)
+    }
+}
+
+struct PyprojectHandler;
+
+impl VersionFileHandler for PyprojectHandler {
+    fn name(&self) -> &str {
+        "Python"
+    }
+    fn manifest_names(&self) -> &[&str] {
+        &["pyproject.toml"]
+    }
+    fn lock_file_names(&self) -> &[&str] {
+        &["uv.lock", "poetry.lock"]
+    }
+    fn bump(&self, path: &Path, new_version: &str) -> Result<Vec<PathBuf>, ReleaseError> {
+        bump_pyproject_toml(path, new_version)
+    }
+}
+
+struct MavenHandler;
+
+impl VersionFileHandler for MavenHandler {
+    fn name(&self) -> &str {
+        "Maven"
+    }
+    fn manifest_names(&self) -> &[&str] {
+        &["pom.xml"]
+    }
+    fn lock_file_names(&self) -> &[&str] {
+        &[]
+    }
+    fn bump(&self, path: &Path, new_version: &str) -> Result<Vec<PathBuf>, ReleaseError> {
+        bump_pom_xml(path, new_version).map(|()| vec![])
+    }
+}
+
+struct GradleHandler;
+
+impl VersionFileHandler for GradleHandler {
+    fn name(&self) -> &str {
+        "Gradle"
+    }
+    fn manifest_names(&self) -> &[&str] {
+        &["build.gradle", "build.gradle.kts"]
+    }
+    fn lock_file_names(&self) -> &[&str] {
+        &[]
+    }
+    fn bump(&self, path: &Path, new_version: &str) -> Result<Vec<PathBuf>, ReleaseError> {
+        bump_gradle(path, new_version).map(|()| vec![])
+    }
+}
+
+struct GoHandler;
+
+impl VersionFileHandler for GoHandler {
+    fn name(&self) -> &str {
+        "Go"
+    }
+    fn manifest_names(&self) -> &[&str] {
+        &[]
+    }
+    fn lock_file_names(&self) -> &[&str] {
+        &[]
+    }
+    /// Custom detection: scan for `*.go` files containing a `Version` variable.
+    fn detect(&self, dir: &Path) -> bool {
+        let Ok(entries) = fs::read_dir(dir) else {
+            return false;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.extension().is_some_and(|e| e == "go")
+                && let Ok(contents) = fs::read_to_string(&path)
+                && go_version_re().is_match(&contents)
+            {
+                return true;
+            }
+        }
+        false
+    }
+    fn bump(&self, path: &Path, new_version: &str) -> Result<Vec<PathBuf>, ReleaseError> {
+        bump_go_version(path, new_version).map(|()| vec![])
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Registry & public API
+// ---------------------------------------------------------------------------
+
+/// Return all known version-file handlers.
+pub fn all_handlers() -> Vec<Box<dyn VersionFileHandler>> {
+    vec![
+        Box::new(CargoHandler),
+        Box::new(NpmHandler),
+        Box::new(PyprojectHandler),
+        Box::new(MavenHandler),
+        Box::new(GradleHandler),
+        Box::new(GoHandler),
+    ]
+}
+
+/// Auto-detect version files in a directory. Returns relative paths (relative
+/// to `dir`) for every manifest whose ecosystem is detected.
+///
+/// For the Go handler the detected `.go` file containing the Version variable
+/// is returned (not a manifest name).
+pub fn detect_version_files(dir: &Path) -> Vec<String> {
+    let mut files = Vec::new();
+    for handler in all_handlers() {
+        if !handler.detect(dir) {
+            continue;
+        }
+        if handler.manifest_names().is_empty() {
+            // Go handler: find the actual .go file with a Version var
+            if let Ok(entries) = fs::read_dir(dir) {
+                let re = go_version_re();
+                for entry in entries.flatten() {
+                    let path = entry.path();
+                    if path.extension().is_some_and(|e| e == "go")
+                        && let Ok(contents) = fs::read_to_string(&path)
+                        && re.is_match(&contents)
+                    {
+                        files.push(path.file_name().unwrap().to_string_lossy().into_owned());
+                    }
+                }
+            }
+        } else {
+            for name in handler.manifest_names() {
+                if dir.join(name).exists() {
+                    files.push((*name).to_string());
+                }
+            }
+        }
+    }
+    files
+}
+
+/// Look up the handler for a given filename.
+fn handler_for_file(filename: &str) -> Option<Box<dyn VersionFileHandler>> {
+    for handler in all_handlers() {
+        if handler.manifest_names().contains(&filename) {
+            return Some(handler);
+        }
+    }
+    // Go files: any .go extension
+    if filename.ends_with(".go") {
+        return Some(Box::new(GoHandler));
+    }
+    None
+}
+
 /// Bump the `version` field in the given manifest file.
 ///
 /// Returns a list of additional files that were auto-discovered and bumped
@@ -27,18 +239,67 @@ pub fn bump_version_file(path: &Path, new_version: &str) -> Result<Vec<PathBuf>,
         .and_then(|n| n.to_str())
         .unwrap_or_default();
 
-    match filename {
-        "Cargo.toml" => bump_cargo_toml(path, new_version),
-        "package.json" => bump_package_json(path, new_version),
-        "pyproject.toml" => bump_pyproject_toml(path, new_version),
-        "pom.xml" => bump_pom_xml(path, new_version).map(|()| vec![]),
-        "build.gradle" | "build.gradle.kts" => bump_gradle(path, new_version).map(|()| vec![]),
-        _ if filename.ends_with(".go") => bump_go_version(path, new_version).map(|()| vec![]),
-        other => Err(ReleaseError::VersionBump(format!(
-            "unsupported version file: {other}"
+    match handler_for_file(filename) {
+        Some(handler) => handler.bump(path, new_version),
+        None => Err(ReleaseError::VersionBump(format!(
+            "unsupported version file: {filename}"
         ))),
     }
 }
+
+/// Given a list of bumped manifest paths, discover associated lock files that exist on disk.
+/// Searches the manifest's directory and ancestors (for monorepo roots).
+/// Returns deduplicated paths.
+pub fn discover_lock_files(bumped_files: &[String]) -> Vec<PathBuf> {
+    let handlers = all_handlers();
+    let mut seen = std::collections::BTreeSet::new();
+    for file in bumped_files {
+        let path = Path::new(file);
+        let filename = path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or_default();
+
+        // Collect lock file names from all handlers that match this manifest
+        let mut lock_names: Vec<&str> = Vec::new();
+        for handler in &handlers {
+            if handler.manifest_names().contains(&filename) {
+                lock_names.extend(handler.lock_file_names());
+            }
+        }
+
+        // Search the manifest's directory and ancestors
+        let mut dir = path.parent();
+        while let Some(d) = dir {
+            for lock_name in &lock_names {
+                let lock_path = d.join(lock_name);
+                if lock_path.exists() {
+                    seen.insert(lock_path);
+                }
+            }
+            dir = d.parent();
+            // Stop at repo root (don't traverse beyond .git)
+            if d.join(".git").exists() {
+                break;
+            }
+        }
+    }
+    seen.into_iter().collect()
+}
+
+/// Returns `true` if the given filename is a supported version file.
+pub fn is_supported_version_file(filename: &str) -> bool {
+    handler_for_file(filename).is_some()
+}
+
+/// Compile the Go Version variable regex (used in detection).
+fn go_version_re() -> Regex {
+    Regex::new(r#"(?:var|const)\s+Version\s*(?:string\s*)?=\s*""#).unwrap()
+}
+
+// ---------------------------------------------------------------------------
+// Private bump implementations (unchanged)
+// ---------------------------------------------------------------------------
 
 fn bump_cargo_toml(path: &Path, new_version: &str) -> Result<Vec<PathBuf>, ReleaseError> {
     let contents = read_file(path)?;
@@ -369,54 +630,6 @@ fn resolve_member_globs(root_dir: &Path, patterns: &[String], manifest_name: &st
         }
     }
     paths
-}
-
-/// Known manifest → lock file mappings. Lock files are searched in the same
-/// directory as the manifest, then in ancestor directories up to the repo root.
-const LOCK_FILE_MAPPINGS: &[(&str, &[&str])] = &[
-    ("Cargo.toml", &["Cargo.lock"]),
-    (
-        "package.json",
-        &["package-lock.json", "yarn.lock", "pnpm-lock.yaml"],
-    ),
-    ("pyproject.toml", &["uv.lock", "poetry.lock"]),
-];
-
-/// Given a list of bumped manifest paths, discover associated lock files that exist on disk.
-/// Searches the manifest's directory and ancestors (for monorepo roots).
-/// Returns deduplicated paths.
-pub fn discover_lock_files(bumped_files: &[String]) -> Vec<PathBuf> {
-    let mut seen = std::collections::BTreeSet::new();
-    for file in bumped_files {
-        let path = Path::new(file);
-        let filename = path
-            .file_name()
-            .and_then(|n| n.to_str())
-            .unwrap_or_default();
-
-        let lock_names: &[&str] = LOCK_FILE_MAPPINGS
-            .iter()
-            .find(|(manifest, _)| *manifest == filename)
-            .map(|(_, locks)| *locks)
-            .unwrap_or(&[]);
-
-        // Search the manifest's directory and ancestors
-        let mut dir = path.parent();
-        while let Some(d) = dir {
-            for lock_name in lock_names {
-                let lock_path = d.join(lock_name);
-                if lock_path.exists() {
-                    seen.insert(lock_path);
-                }
-            }
-            dir = d.parent();
-            // Stop at repo root (don't traverse beyond .git)
-            if d.join(".git").exists() {
-                break;
-            }
-        }
-    }
-    seen.into_iter().collect()
 }
 
 fn read_file(path: &Path) -> Result<String, ReleaseError> {
@@ -965,5 +1178,97 @@ version = "1.0.0"
 
         let extra = bump_version_file(&path, "2.0.0").unwrap();
         assert!(extra.is_empty());
+    }
+
+    // --- auto-detection tests ---
+
+    #[test]
+    fn detect_cargo_toml() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::write(
+            dir.path().join("Cargo.toml"),
+            "[package]\nname = \"x\"\nversion = \"0.1.0\"\n",
+        )
+        .unwrap();
+
+        let detected = detect_version_files(dir.path());
+        assert_eq!(detected, vec!["Cargo.toml"]);
+    }
+
+    #[test]
+    fn detect_package_json() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::write(
+            dir.path().join("package.json"),
+            r#"{"name": "x", "version": "1.0.0"}"#,
+        )
+        .unwrap();
+
+        let detected = detect_version_files(dir.path());
+        assert_eq!(detected, vec!["package.json"]);
+    }
+
+    #[test]
+    fn detect_pyproject_toml() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::write(
+            dir.path().join("pyproject.toml"),
+            "[project]\nname = \"x\"\nversion = \"0.1.0\"\n",
+        )
+        .unwrap();
+
+        let detected = detect_version_files(dir.path());
+        assert_eq!(detected, vec!["pyproject.toml"]);
+    }
+
+    #[test]
+    fn detect_multiple_ecosystems() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::write(
+            dir.path().join("Cargo.toml"),
+            "[package]\nname = \"x\"\nversion = \"0.1.0\"\n",
+        )
+        .unwrap();
+        fs::write(
+            dir.path().join("package.json"),
+            r#"{"name": "x", "version": "1.0.0"}"#,
+        )
+        .unwrap();
+
+        let detected = detect_version_files(dir.path());
+        assert!(detected.contains(&"Cargo.toml".to_string()));
+        assert!(detected.contains(&"package.json".to_string()));
+    }
+
+    #[test]
+    fn detect_empty_directory() {
+        let dir = tempfile::tempdir().unwrap();
+        let detected = detect_version_files(dir.path());
+        assert!(detected.is_empty());
+    }
+
+    #[test]
+    fn detect_go_version_file() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::write(
+            dir.path().join("version.go"),
+            "package main\n\nvar Version = \"1.0.0\"\n",
+        )
+        .unwrap();
+
+        let detected = detect_version_files(dir.path());
+        assert_eq!(detected, vec!["version.go"]);
+    }
+
+    #[test]
+    fn is_supported_recognizes_all_types() {
+        assert!(is_supported_version_file("Cargo.toml"));
+        assert!(is_supported_version_file("package.json"));
+        assert!(is_supported_version_file("pyproject.toml"));
+        assert!(is_supported_version_file("pom.xml"));
+        assert!(is_supported_version_file("build.gradle"));
+        assert!(is_supported_version_file("build.gradle.kts"));
+        assert!(is_supported_version_file("version.go"));
+        assert!(!is_supported_version_file("unknown.txt"));
     }
 }
