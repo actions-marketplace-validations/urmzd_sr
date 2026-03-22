@@ -1,5 +1,37 @@
 # Changelog
 
+## 2.3.0 (2026-03-22)
+
+### Features
+
+- **commit**: add commit reorganization functionality ([4e2dc8e](https://github.com/urmzd/sr/commit/4e2dc8e98d0bc8dda9c04aa0e1813374a57caffc))
+- **git**: add commits_since_last_tag method ([92d1f2c](https://github.com/urmzd/sr/commit/92d1f2c879dd59985bcbbd674099e06c8fed91c3))
+- **cli**: implement automatic hook synchronization ([66336a9](https://github.com/urmzd/sr/commit/66336a9d91e85374a43bc732e5f477a02db6a8c3))
+- **cli**: implement --merge flag for incremental config updates ([c39360e](https://github.com/urmzd/sr/commit/c39360e5863d2044a898212f9aad982fda2af2cd))
+- **config**: add structured hook configuration with pattern matching ([bd6d8d9](https://github.com/urmzd/sr/commit/bd6d8d9bb6228a569bf2e86e0f166d8474ad0f5a))
+
+### Documentation
+
+- update hook synchronization documentation ([633d54c](https://github.com/urmzd/sr/commit/633d54c78e57f8729a702be378291e062354c37b))
+- update documentation for v2 release ([1564679](https://github.com/urmzd/sr/commit/1564679541e9773c1f39fbc02d642f6ef6638963))
+
+### Refactoring
+
+- **commands**: extract rebase command from commit ([f78d959](https://github.com/urmzd/sr/commit/f78d959dc671d7a988842644888acc350caeaf59))
+- **test**: use struct literal for ReleaseConfig initialization ([3da50ff](https://github.com/urmzd/sr/commit/3da50ffb55d3536539c893a81ca4477ce26f0900))
+- **hooks**: extract commit-msg logic to rust library ([1e7f6dd](https://github.com/urmzd/sr/commit/1e7f6ddc93f26ab18a30674ff3edbac6cb768de1))
+
+### Miscellaneous
+
+- remove backup commit-msg hook and ignore *.bak files ([dbb8973](https://github.com/urmzd/sr/commit/dbb8973c52a587c2c58009138d31850eae2af08e))
+- **build**: integrate hook setup into justfile ([9c42be3](https://github.com/urmzd/sr/commit/9c42be34b2abe4a570b6b74723d9939eebd7af46))
+- ignore machine-local hook sync state ([5c41463](https://github.com/urmzd/sr/commit/5c41463e309002800103fc73920f170458263a9b))
+- document sr.yaml with comprehensive inline comments ([e08a15d](https://github.com/urmzd/sr/commit/e08a15d1d791a0a4e5e4c921d38c80916dd6ac88))
+- update GitHub Action metadata and build configuration ([8620d73](https://github.com/urmzd/sr/commit/8620d739a65fddb73efa67ff6d38378eb102e02c))
+
+[Full Changelog](https://github.com/urmzd/sr/compare/v2.2.0...v2.3.0)
+
+
 ## 2.2.0 (2026-03-22)
 
 ### Features
