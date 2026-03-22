@@ -17,6 +17,7 @@ Pure domain logic for [sr](https://github.com/urmzd/sr) — a single-binary sema
 | `CommitParser` | Parse raw commits into conventional commits |
 | `CommitClassifier` | Map commit types to bump levels and changelog sections |
 | `ChangelogFormatter` | Render changelog entries to text |
+| `VersionFileHandler` | Detect, read, and bump version in a specific file format |
 | `ReleaseStrategy` | Orchestrate plan + execute |
 
 ## Key Types
@@ -37,7 +38,7 @@ Pure domain logic for [sr](https://github.com/urmzd/sr) — a single-binary sema
 |----------|-------------|
 | `determine_bump(commits, classifier)` | Compute the highest bump level from a set of conventional commits |
 | `apply_bump(version, bump)` | Apply a bump level to a semver `Version`, returning the new version |
-| `bump_version_file(path, new_version)` | Update the version field in `Cargo.toml`, `package.json`, or `pyproject.toml` |
+| `VersionFileHandler::bump(path, new_version)` | Update the version field in a manifest file (Cargo.toml, package.json, pyproject.toml, pom.xml, Gradle, Go) and auto-discover workspace members |
 
 ## Usage
 
@@ -45,7 +46,7 @@ Add `sr-core` to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-sr-core = "0.1"
+sr-core = "2.1"
 ```
 
 ### Building a custom release strategy

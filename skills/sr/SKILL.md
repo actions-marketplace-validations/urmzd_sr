@@ -10,7 +10,7 @@ Use `sr` to manage the full release lifecycle.
 
 ## Steps
 
-1. Ensure a `sr.yaml` config exists. If not, run `sr init`.
+1. Ensure a `sr.yaml` config exists. If not, run `sr init`. To add new default fields to an existing config, run `sr init --merge`.
 2. If `$ARGUMENTS` is provided, run `sr $ARGUMENTS` instead of the default flow.
 3. Default flow: preview with `sr plan`, then execute with `sr release`.
 
@@ -46,6 +46,9 @@ Use `sr` to manage the full release lifecycle.
 | `sr changelog --write` | Write changelog to disk |
 | `sr version --short` | Print next version number |
 | `sr config --resolved` | Show resolved config with defaults |
+| `sr init` | Generate fully-commented sr.yaml + install hooks |
+| `sr init --merge` | Add new default fields to existing config |
+| `sr init --force` | Overwrite config with fresh commented template |
 
 ## Monorepo
 

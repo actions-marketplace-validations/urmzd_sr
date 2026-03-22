@@ -1,6 +1,6 @@
 # sr — Semantic Release
 
-> A single-binary, zero-dependency semantic release tool for any language. Parses conventional commits, computes semver bumps, generates changelogs, creates GitHub releases with artifact uploads, and bumps version files across Cargo.toml, package.json, pyproject.toml, pom.xml, Gradle, and Go. Supports monorepos with per-package independent versioning. Ships as both a CLI and a GitHub Action.
+> An AI-powered release engineering CLI — from commit to release. AI-powered commits, code review, PR generation, branch naming, and freeform Q&A with sandboxed read-only agents. Parses conventional commits, computes semver bumps (with v0 protection), generates changelogs, creates GitHub releases with artifact uploads, and bumps version files across Cargo.toml, package.json, pyproject.toml, pom.xml, Gradle, and Go. Supports monorepos with per-package independent versioning. Ships as both a CLI and a GitHub Action.
 
 ## Docs
 

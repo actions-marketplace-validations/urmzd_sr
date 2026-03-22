@@ -47,14 +47,14 @@ If you use the [pre-commit](https://pre-commit.com/) framework, add to your `.pr
 ```yaml
 repos:
   - repo: https://github.com/urmzd/sr
-    rev: v0.5.0
+    rev: v2.1.0
     hooks:
       - id: conventional-commit-msg
 ```
 
 ### How it works
 
-The hook reads `types` and `commit_pattern` from `sr.yaml`. If the config file is missing it falls back to the built-in defaults.
+The hook reads `types` and `commit_pattern` from `sr.yaml`. If the config file is missing it falls back to the built-in defaults. Run `sr init --merge` after upgrading to add any new config fields without losing your customizations.
 
 - **Allowed types** are derived from the `types` list — only types defined there are accepted.
 - **Pattern** is derived from `commit_pattern` (a regex with named groups `type`, `scope`, `breaking`, `description`).
@@ -110,6 +110,7 @@ action.yml     GitHub Action composite wrapper (repo root)
 | `CommitParser` | Raw commit to conventional commit |
 | `CommitClassifier` | Single source of truth for type → bump level / changelog section |
 | `ChangelogFormatter` | Render changelog entries to text |
+| `VersionFileHandler` | Detect, read, and bump version in a specific file format |
 | `ReleaseStrategy` | Orchestrate plan + execute |
 
 ## Code Style

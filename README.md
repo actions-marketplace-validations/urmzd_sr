@@ -69,7 +69,7 @@ If a snapshot restore fails, the snapshot is preserved for manual recovery and i
 ### Release automation
 - Conventional Commits parsing (built-in, configurable via `commit_pattern`)
 - `BREAKING CHANGE:` / `BREAKING-CHANGE:` footer detection (in addition to `!` suffix)
-- Semantic versioning bumps (major / minor / patch)
+- Semantic versioning bumps (major / minor / patch) with v0 protection (breaking changes are downshifted from major to minor while the version is `0.x.y` to prevent accidental graduation to v1 — bypass with `--force`)
 - Automatic version file bumping (Cargo.toml, package.json, pyproject.toml, pom.xml, Gradle, Go)
 - Changelog generation (markdown, with configurable sections and compare URLs)
 - GitHub Releases (via REST API — no external tools needed)
@@ -92,7 +92,7 @@ The installer automatically adds `~/.local/bin` to your `PATH` in your shell pro
 ### GitHub Action (recommended)
 
 ```yaml
-- uses: urmzd/sr@v1
+- uses: urmzd/sr@v2
   with:
     github-token: ${{ secrets.GITHUB_TOKEN }}
 ```
@@ -116,13 +116,13 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      - uses: urmzd/sr@v1
+      - uses: urmzd/sr@v2
 ```
 
 Dry-run on pull requests:
 
 ```yaml
-      - uses: urmzd/sr@v1
+      - uses: urmzd/sr@v2
         with:
           command: release
           dry-run: "true"
@@ -131,7 +131,7 @@ Dry-run on pull requests:
 Use outputs in subsequent steps:
 
 ```yaml
-      - uses: urmzd/sr@v1
+      - uses: urmzd/sr@v2
         id: sr
       - if: steps.sr.outputs.released == 'true'
         run: echo "Released ${{ steps.sr.outputs.version }}"
@@ -146,7 +146,7 @@ Upload artifacts to the release:
           path: release-assets
           merge-multiple: true
 
-      - uses: urmzd/sr@v1
+      - uses: urmzd/sr@v2
         with:
           artifacts: "release-assets/*"
 ```
@@ -156,7 +156,7 @@ The `artifacts` input accepts glob patterns (newline or comma separated). All ma
 Run a build step between version bump and commit (useful for lock files, codegen, etc.):
 
 ```yaml
-      - uses: urmzd/sr@v1
+      - uses: urmzd/sr@v2
         with:
           build-command: "cargo build --release"
 ```
@@ -186,7 +186,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      - uses: urmzd/sr@v1
+      - uses: urmzd/sr@v2
         with:
           force: ${{ github.event.inputs.force || 'false' }}
 ```
@@ -304,25 +304,37 @@ sr completions bash >> ~/.bashrc
 
 ### Commit message validation
 
-`sr` manages git hooks through the `hooks` section in `sr.yaml`. Each hook is a list of shell commands. Every command receives a JSON context on stdin with the hook's arguments — pipe it to `jq`, parse it in your script, or ignore it.
+`sr` manages git hooks through the `hooks` section in `sr.yaml`. Hook entries can be **simple commands** (strings) or **structured steps** with file-pattern matching. Every command receives a JSON context on stdin with the hook's arguments — pipe it to `jq`, parse it in your script, or ignore it.
 
 ```yaml
 # sr.yaml
 hooks:
   commit-msg:
-    - sr hook commit-msg                          # built-in conventional commit validation
+    - sr hook commit-msg                          # simple command
   pre-commit:
-    - cargo fmt -- --check
-    - cargo clippy --workspace -- -D warnings
+    - step: format                                # structured step — runs only when staged files match
+      patterns:
+        - "*.rs"
+      rules:
+        - "rustfmt --check --edition 2024 {files}"
+    - step: lint
+      patterns:
+        - "*.rs"
+      rules:
+        - "cargo clippy --workspace -- -D warnings"
   pre-push:
-    - cargo test --workspace
+    - cargo test --workspace                      # simple command
 ```
+
+Structured steps only run when staged files match the `patterns` globs. Rules containing `{files}` receive the matched file list.
 
 Hooks are installed as thin wrappers in `.githooks/` that call `sr hook run <name>`:
 
 ```bash
-sr init              # writes sr.yaml + installs hooks
-sr init --no-hooks   # writes sr.yaml only
+sr init              # writes fully-commented sr.yaml + installs hooks
+sr init --merge      # add new default fields to existing sr.yaml without overwriting customizations
+sr init --force      # overwrite sr.yaml with a fresh fully-commented template
+sr init --no-hooks   # writes sr.yaml only (no hook installation)
 sr hook install      # re-install hooks after editing sr.yaml
 ```
 
@@ -364,7 +376,7 @@ sr commit → sr review → sr pr → push → sr plan → sr release
 Use the action outputs to run steps conditionally:
 
 ```yaml
-- uses: urmzd/sr@v1
+- uses: urmzd/sr@v2
   id: sr
 - if: steps.sr.outputs.released == 'true'
   run: ./deploy.sh ${{ steps.sr.outputs.version }}
@@ -434,6 +446,8 @@ All diagnostic messages go to stderr, so stdout is always clean JSON (or empty o
 | `sr config` | Validate and display resolved configuration |
 | `sr init` | Create a default `sr.yaml` config file |
 | `sr completions` | Generate shell completions (bash, zsh, fish, powershell, elvish) |
+| `sr hook` | Manage and run git hooks (`commit-msg`, `install`, `run`) |
+| `sr update` | Update sr to the latest version |
 
 ### Global flags
 
@@ -471,7 +485,8 @@ All commands accept these flags for AI backend configuration:
 - `sr changelog --write` — write changelog to disk
 - `sr version --short` — print only the version number
 - `sr config --resolved` — show config with defaults applied
-- `sr init --force` — overwrite existing config file
+- `sr init --force` — overwrite existing config with a fresh fully-commented template
+- `sr init --merge` — add new default fields to existing config without overwriting customizations
 - `sr completions bash` — generate Bash completions
 
 ### Exit codes
@@ -499,6 +514,8 @@ Force mode will error if:
 
 `sr` looks for `sr.yaml` in the repository root. All fields are optional and have sensible defaults.
 
+Running `sr init` generates a fully-commented `sr.yaml` with every available option documented inline. When upgrading `sr` and new config fields are added, run `sr init --merge` to add them to your existing config without overwriting your customizations.
+
 ### Configuration reference
 
 | Field | Type | Default | Description |
@@ -523,22 +540,39 @@ Force mode will error if:
 | `draft` | `bool` | `false` | Create GitHub releases as drafts. Draft releases are not visible to the public until manually published |
 | `release_name_template` | `string?` | `null` | [Minijinja](https://docs.rs/minijinja) template for the GitHub release name. Variables: `version`, `tag_name`, `tag_prefix`. Default: uses the tag name (e.g. `v1.2.0`) |
 | `changelog.template` | `string?` | `null` | Custom [minijinja](https://docs.rs/minijinja) template for changelog rendering. See template variables below |
+| `hooks` | `map<string, HookEntry[]>` | `{commit-msg: ["sr hook commit-msg"]}` | Git hooks — simple commands or structured steps with file-pattern matching. See [Commit message validation](#commit-message-validation) |
 | `packages` | `PackageConfig[]` | `[]` | Monorepo packages — each released independently. See [Monorepo support](#monorepo-support) |
 
 ### Example config
 
+This is the fully-commented config generated by `sr init`. Every field is shown with its default value:
+
 ```yaml
+# sr configuration
+
+# Branches that trigger releases when commits are pushed.
 branches:
   - main
+  - master
 
+# Prefix prepended to version tags (e.g. "v1.2.0").
 tag_prefix: "v"
 
-# Regex for parsing commits — must have named groups: type, scope, breaking, description
+# Regex for parsing conventional commits.
+# Required named groups: type, description.
+# Optional named groups: scope, breaking.
 commit_pattern: '^(?P<type>\w+)(?:\((?P<scope>[^)]+)\))?(?P<breaking>!)?:\s+(?P<description>.+)'
 
+# Changelog section heading for breaking changes.
 breaking_section: Breaking Changes
+
+# Fallback changelog section for unrecognised commit types.
 misc_section: Miscellaneous
 
+# Commit type definitions.
+# name:    commit type prefix (e.g. "feat", "fix")
+# bump:    version bump level — major, minor, patch, or omit for no bump
+# section: changelog section heading, or omit to exclude from changelog
 types:
   - name: feat
     bump: minor
@@ -555,53 +589,92 @@ types:
     section: Refactoring
   - name: revert
     section: Reverts
-  - name: chore          # no bump, no changelog section
+  - name: chore
   - name: ci
   - name: test
   - name: build
   - name: style
 
+# Changelog configuration.
+# file:     path to the changelog file (e.g. CHANGELOG.md), or omit to skip writing
+# template: custom Minijinja template string for changelog rendering
 changelog:
   file: CHANGELOG.md
+  template:
 
+# Manifest files to bump on release (e.g. Cargo.toml, package.json, pyproject.toml).
+# Auto-detected if empty.
 version_files:
   - Cargo.toml
   - package.json
 
+# Fail if a version file uses an unsupported format (default: skip unknown files).
 version_files_strict: false
 
+# Glob patterns for release assets to upload to GitHub (e.g. "dist/*.tar.gz").
+artifacts: []
+
+# Create floating major version tags (e.g. "v3" pointing to latest v3.x.x).
 floating_tags: false
 
-# Sign tags with GPG/SSH (requires signing key configured in git)
+# Shell command to run after version files are bumped (e.g. "cargo build --release").
+build_command:
+
+# Additional files/globs to stage after build_command runs (e.g. Cargo.lock).
+stage_files: []
+
+# Pre-release identifier (e.g. "alpha", "beta", "rc").
+# When set, versions are formatted as X.Y.Z-<id>.N where N auto-increments.
+prerelease:
+
+# Shell command to run before the release starts (validation, checks).
+pre_release_command:
+
+# Shell command to run after the release completes (notifications, deployments).
+post_release_command:
+
+# Sign annotated tags with GPG/SSH (git tag -s).
 sign_tags: false
 
-# Create GitHub releases as drafts (requires manual publishing)
+# Create GitHub releases as drafts (requires manual publishing).
 draft: false
 
-# Custom release name template (minijinja/Jinja2 syntax, optional)
-# release_name_template: "Release {{ version }}"
+# Minijinja template for the GitHub release name.
+# Available variables: version, tag_name, tag_prefix.
+# Default: uses the tag name (e.g. "v1.2.0").
+release_name_template:
 
-build_command: "cargo build --release"
+# Git hooks configuration.
+# Each key is a git hook name. Values can be simple commands or structured steps.
+# Steps with patterns only run when staged files match the globs.
+# Rules containing {files} receive the matched file list.
+hooks:
+  commit-msg:
+    - sr hook commit-msg
+  # pre-commit:
+  #   - step: format
+  #     patterns:
+  #       - "*.rs"
+  #     rules:
+  #       - "rustfmt --check --edition 2024 {files}"
+  #   - step: lint
+  #     patterns:
+  #       - "*.rs"
+  #     rules:
+  #       - "cargo clippy --workspace -- -D warnings"
 
-# Additional files to stage after build_command (e.g. lock files, codegen output)
-stage_files:
-  - Cargo.lock
-
-# Hook commands (SR_VERSION and SR_TAG env vars available)
-pre_release_command: "cargo test"
-post_release_command: "echo Released $SR_VERSION"
-
-artifacts:
-  - "dist/*.tar.gz"
-
-# Custom changelog template (minijinja/Jinja2 syntax, optional)
-# changelog:
-#   template: |
-#     {% for entry in entries %}
-#     ## {{ entry.version }} ({{ entry.date }})
-#     {% for c in entry.commits %}- {{ c.description }}
-#     {% endfor %}
-#     {% endfor %}
+# Monorepo packages (uncomment and configure if needed).
+# packages:
+#   - name: core
+#     path: crates/core
+#     tag_prefix: "core/v"
+#     version_files:
+#       - crates/core/Cargo.toml
+#     changelog:
+#       file: crates/core/CHANGELOG.md
+#     build_command: cargo build -p core
+#     stage_files:
+#       - crates/core/Cargo.lock
 ```
 
 ### Supported version files
