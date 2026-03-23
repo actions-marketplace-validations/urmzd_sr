@@ -1,5 +1,23 @@
 # Changelog
 
+## 2.4.0 (2026-03-23)
+
+### Features
+
+- **commit**: validate messages before execution with error recovery ([34ce2a6](https://github.com/urmzd/sr/commit/34ce2a6f1200bea164315cb5c275489562d70fec))
+- **ui**: add commit validation and failure display functions ([d51b50d](https://github.com/urmzd/sr/commit/d51b50d9b4091a5ed09c69bcb98ca74af04b5122))
+
+### Reverts
+
+- **commit**: remove file-hiding approach for pre-commit hooks ([5dc8c52](https://github.com/urmzd/sr/commit/5dc8c52b161db812cd5c0edb6676a48aae1b3cfd))
+
+### Miscellaneous
+
+- **deps**: bump sr-ai to 2.3.2 and add regex dependency ([7e83439](https://github.com/urmzd/sr/commit/7e83439f8a0b0371db53fc839530bae4892e48ac))
+
+[Full Changelog](https://github.com/urmzd/sr/compare/v2.3.2...v2.4.0)
+
+
 ## 2.3.2 (2026-03-23)
 
 ### Bug Fixes
