@@ -156,6 +156,16 @@ pub fn commit_skipped() {
     println!("    {} {}", "−".yellow(), "skipped (no staged files)".dim());
 }
 
+/// Print commit failed notice.
+pub fn commit_failed(reason: &str) {
+    println!(
+        "    {} {} {}",
+        "✗".red().bold(),
+        "failed:".red(),
+        reason.dim()
+    );
+}
+
 /// Print final summary with commit list.
 pub fn summary(commits: &[(String, String)]) {
     let count = commits.len();
@@ -169,6 +179,53 @@ pub fn summary(commits: &[(String, String)]) {
     println!();
     for (sha, msg) in commits {
         println!("    {}  {}", sha.as_str().dim(), msg);
+    }
+    println!();
+}
+
+/// Display invalid commit messages found during pre-validation.
+pub fn invalid_messages(invalid: &[(usize, String, String)]) {
+    println!();
+    println!(
+        "  {} {}",
+        "⚠".yellow().bold(),
+        format!(
+            "{} commit message{} failed validation:",
+            invalid.len(),
+            if invalid.len() == 1 { "" } else { "s" }
+        )
+        .yellow()
+    );
+    for (idx, msg, reason) in invalid {
+        println!(
+            "    {} {} — {}",
+            format!("[{idx}]").cyan(),
+            msg,
+            reason.as_str().dim()
+        );
+    }
+    println!();
+}
+
+/// Display commits that failed during execution.
+pub fn failed_commits(failed: &[(usize, String, String)]) {
+    println!(
+        "  {} {}",
+        "⚠".yellow().bold(),
+        format!(
+            "{} commit{} failed:",
+            failed.len(),
+            if failed.len() == 1 { "" } else { "s" }
+        )
+        .yellow()
+    );
+    for (idx, msg, reason) in failed {
+        println!(
+            "    {} {} — {}",
+            format!("[{idx}]").cyan(),
+            msg,
+            reason.as_str().dim()
+        );
     }
     println!();
 }
