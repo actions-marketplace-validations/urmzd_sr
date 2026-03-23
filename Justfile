@@ -32,4 +32,9 @@ publish:
     cargo publish -p sr-ai --dry-run
     cargo publish -p sr-cli --dry-run
 
+record:
+    teasr showme
+
 check: check-fmt lint test
+
+ci: check-fmt lint build test
