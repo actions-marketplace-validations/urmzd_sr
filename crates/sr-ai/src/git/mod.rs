@@ -252,17 +252,23 @@ impl GitRepo {
     ///   - Linux:   ~/.local/share/sr/snapshots/<hash>/
     ///   - Windows: %LOCALAPPDATA%/sr/snapshots/<hash>/
     ///
-    /// The snapshot includes:
-    /// - A `stash` ref created via `git stash create` (staged + unstaged changes)
-    /// - An `untracked.tar` of untracked files
-    /// - The list of staged files in `staged.txt`
-    /// - The repo root path in `repo_root` (so restore targets the right directory)
+    /// The snapshot directly copies every changed/added/deleted file into
+    /// `files/` alongside a `manifest.json` that records each file's status
+    /// and whether it was staged. This avoids git-stash entirely — restore
+    /// is a plain file copy that cannot conflict.
     ///
     /// Lives completely outside the repo so the agent cannot touch it.
     pub fn snapshot_working_tree(&self) -> Result<PathBuf> {
         let snapshot_dir = snapshot_dir_for(&self.root)
             .context("failed to resolve snapshot directory (no data directory available)")?;
+        // Start fresh — remove any prior snapshot for this repo
+        if snapshot_dir.exists() {
+            std::fs::remove_dir_all(&snapshot_dir).ok();
+        }
         std::fs::create_dir_all(&snapshot_dir).context("failed to create snapshot directory")?;
+
+        let files_dir = snapshot_dir.join("files");
+        std::fs::create_dir_all(&files_dir)?;
 
         // Record which repo this snapshot belongs to
         std::fs::write(
@@ -271,52 +277,77 @@ impl GitRepo {
         )
         .context("failed to write repo_root")?;
 
-        // Capture staged file list
-        let staged = self.git(&["diff", "--cached", "--name-only"])?;
-        std::fs::write(snapshot_dir.join("staged.txt"), staged.trim())
-            .context("failed to write staged.txt")?;
-
-        // Create a stash object without modifying working tree or index.
-        // `git stash create` writes a stash commit but doesn't reset anything.
-        let (ok, stash_ref) = self.git_allow_failure(&["stash", "create"])?;
-        let stash_ref = stash_ref.trim().to_string();
-        if ok && !stash_ref.is_empty() {
-            std::fs::write(snapshot_dir.join("stash_ref"), &stash_ref)
-                .context("failed to write stash_ref")?;
-        } else {
-            let _ = std::fs::remove_file(snapshot_dir.join("stash_ref"));
+        // Record current HEAD so we can reset if partial commits were made
+        let (has_head, head_ref) = self.git_allow_failure(&["rev-parse", "HEAD"])?;
+        if has_head {
+            std::fs::write(snapshot_dir.join("head_ref"), head_ref.trim())
+                .context("failed to write head_ref")?;
         }
 
-        // Archive untracked files
-        let untracked = self.git(&["ls-files", "--others", "--exclude-standard"])?;
-        let untracked_files: Vec<&str> = untracked
+        // Build manifest: every file that shows up in `git status --porcelain`
+        // gets its content copied and its status recorded.
+        let porcelain = self.git(&["status", "--porcelain"])?;
+        let staged_names = self.git(&["diff", "--cached", "--name-only"])?;
+        let staged_set: std::collections::HashSet<&str> = staged_names
             .lines()
             .map(|l| l.trim())
             .filter(|l| !l.is_empty())
             .collect();
-        let tar_path = snapshot_dir.join("untracked.tar");
-        if !untracked_files.is_empty() {
-            let file_list = untracked_files.join("\n");
-            let file_list_path = snapshot_dir.join("untracked_list.txt");
-            std::fs::write(&file_list_path, &file_list)?;
-            let status = Command::new("tar")
-                .args([
-                    "cf",
-                    tar_path.to_str().unwrap(),
-                    "-T",
-                    file_list_path.to_str().unwrap(),
-                ])
-                .current_dir(&self.root)
-                .stdout(std::process::Stdio::null())
-                .stderr(std::process::Stdio::null())
-                .status()
-                .context("failed to run tar")?;
-            if !status.success() {
-                eprintln!("warning: failed to archive untracked files");
-            }
-        } else {
-            let _ = std::fs::remove_file(&tar_path);
+
+        #[derive(serde::Serialize, serde::Deserialize)]
+        struct ManifestEntry {
+            path: String,
+            /// X (index) status character from porcelain
+            index_status: char,
+            /// Y (worktree) status character from porcelain
+            worktree_status: char,
+            /// Whether the file was staged at snapshot time
+            staged: bool,
+            /// Whether a file copy exists in the snapshot (false for deletions)
+            has_content: bool,
         }
+
+        let mut manifest: Vec<ManifestEntry> = Vec::new();
+
+        for line in porcelain.lines() {
+            if line.len() < 3 {
+                continue;
+            }
+            let bytes = line.as_bytes();
+            let x = bytes[0] as char;
+            let y = bytes[1] as char;
+            let mut path = line[3..].to_string();
+            // Handle renames: "R  old -> new"
+            if let Some(pos) = path.find(" -> ") {
+                path = path[pos + 4..].to_string();
+            }
+
+            let src = self.root.join(&path);
+            let has_content = src.exists() && src.is_file();
+
+            if has_content {
+                let dest = files_dir.join(&path);
+                if let Some(parent) = dest.parent() {
+                    std::fs::create_dir_all(parent).ok();
+                }
+                if let Err(e) = std::fs::copy(&src, &dest) {
+                    eprintln!("warning: failed to snapshot {path}: {e}");
+                }
+            }
+
+            manifest.push(ManifestEntry {
+                staged: staged_set.contains(path.as_str()),
+                path,
+                index_status: x,
+                worktree_status: y,
+                has_content,
+            });
+        }
+
+        let manifest_json =
+            serde_json::to_string_pretty(&manifest).context("failed to serialize manifest")?;
+        std::fs::write(snapshot_dir.join("manifest.json"), manifest_json)
+            .context("failed to write manifest.json")?;
 
         // Mark snapshot as valid
         let now = std::time::SystemTime::now()
@@ -329,49 +360,94 @@ impl GitRepo {
         Ok(snapshot_dir)
     }
 
-    /// Restore working tree from the latest snapshot (best-effort).
+    /// Restore working tree from the latest snapshot.
+    ///
+    /// 1. Reset HEAD to the original commit (undoes any partial commits)
+    /// 2. Clean the index
+    /// 3. Copy every snapshotted file back from `files/`
+    /// 4. Delete files that were deleted at snapshot time
+    /// 5. Re-stage files that were staged at snapshot time
+    ///
+    /// This is a plain file copy — no git-stash, no merge conflicts.
     pub fn restore_snapshot(&self) -> Result<()> {
         let snapshot_dir = self.snapshot_dir()?;
         if !snapshot_dir.join("timestamp").exists() {
             bail!("no valid snapshot found");
         }
 
-        // Restore tracked changes from stash ref
-        let stash_ref_path = snapshot_dir.join("stash_ref");
-        if stash_ref_path.exists() {
-            let stash_ref = std::fs::read_to_string(&stash_ref_path)?;
-            let stash_ref = stash_ref.trim();
-            if !stash_ref.is_empty() {
-                let (ok, _) = self.git_allow_failure(&["stash", "apply", stash_ref])?;
-                if !ok {
-                    eprintln!("warning: failed to apply stash {stash_ref}, trying checkout");
-                    let _ = self.git_allow_failure(&["checkout", "."]);
-                    let _ = self.git_allow_failure(&["stash", "apply", stash_ref]);
-                }
+        let files_dir = snapshot_dir.join("files");
+
+        // Step 1: Reset HEAD to pre-operation state
+        let head_ref_path = snapshot_dir.join("head_ref");
+        if head_ref_path.exists() {
+            let original_head = std::fs::read_to_string(&head_ref_path)?;
+            let original_head = original_head.trim();
+            if !original_head.is_empty() {
+                let _ = self.git_allow_failure(&["reset", "--soft", original_head]);
             }
         }
 
-        // Restore staged files
-        let staged_path = snapshot_dir.join("staged.txt");
-        if staged_path.exists() {
-            let staged = std::fs::read_to_string(&staged_path)?;
-            for file in staged.lines().filter(|l| !l.trim().is_empty()) {
-                let full = self.root.join(file);
-                if full.exists() {
-                    let _ = self.git_allow_failure(&["add", "--", file]);
+        // Step 2: Clean the index
+        self.reset_head()?;
+
+        // Step 3-5: Restore files from manifest
+        let manifest_path = snapshot_dir.join("manifest.json");
+        if !manifest_path.exists() {
+            bail!("snapshot manifest.json missing — cannot restore");
+        }
+
+        #[derive(serde::Deserialize)]
+        struct ManifestEntry {
+            path: String,
+            index_status: char,
+            worktree_status: char,
+            staged: bool,
+            has_content: bool,
+        }
+
+        let manifest_data = std::fs::read_to_string(&manifest_path)?;
+        let manifest: Vec<ManifestEntry> =
+            serde_json::from_str(&manifest_data).context("failed to parse snapshot manifest")?;
+
+        let mut restored = 0usize;
+        let mut failed = 0usize;
+
+        for entry in &manifest {
+            let dest = self.root.join(&entry.path);
+
+            if entry.has_content {
+                // Restore file content from snapshot copy
+                let src = files_dir.join(&entry.path);
+                if src.exists() {
+                    if let Some(parent) = dest.parent() {
+                        std::fs::create_dir_all(parent).ok();
+                    }
+                    match std::fs::copy(&src, &dest) {
+                        Ok(_) => restored += 1,
+                        Err(e) => {
+                            eprintln!("warning: failed to restore {}: {e}", entry.path);
+                            failed += 1;
+                        }
+                    }
+                } else {
+                    eprintln!("warning: snapshot missing content for {}", entry.path);
+                    failed += 1;
                 }
+            } else if entry.index_status == 'D' || entry.worktree_status == 'D' {
+                // File was deleted at snapshot time — ensure it stays deleted
+                if dest.exists() {
+                    std::fs::remove_file(&dest).ok();
+                }
+            }
+
+            // Re-stage if it was staged at snapshot time
+            if entry.staged {
+                let _ = self.git_allow_failure(&["add", "--", &entry.path]);
             }
         }
 
-        // Restore untracked files
-        let tar_path = snapshot_dir.join("untracked.tar");
-        if tar_path.exists() {
-            let _ = Command::new("tar")
-                .args(["xf", tar_path.to_str().unwrap()])
-                .current_dir(&self.root)
-                .stdout(std::process::Stdio::null())
-                .stderr(std::process::Stdio::null())
-                .status();
+        if failed > 0 {
+            eprintln!("sr: restored {restored} files, {failed} failed");
         }
 
         Ok(())
