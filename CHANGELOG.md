@@ -1,5 +1,14 @@
 # Changelog
 
+## 2.3.2 (2026-03-23)
+
+### Bug Fixes
+
+- **commit**: hide future-commit files from pre-commit hooks ([c47df24](https://github.com/urmzd/sr/commit/c47df247ed04b24c28b521a826b4b7a691bf7728))
+
+[Full Changelog](https://github.com/urmzd/sr/compare/v2.3.1...v2.3.2)
+
+
 ## 2.3.1 (2026-03-23)
 
 ### Bug Fixes
