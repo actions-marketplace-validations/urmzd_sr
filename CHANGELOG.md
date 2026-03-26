@@ -1,5 +1,22 @@
 # Changelog
 
+## 2.4.2 (2026-03-26)
+
+### Bug Fixes
+
+- use lightweight tags for floating version tags (#3) ([75a1312](https://github.com/urmzd/sr/commit/75a1312ff36be31cdfc6e143eaecd3120f4c67e4))
+
+### Documentation
+
+- **skills**: align SKILL.md with agentskills.io spec ([0344b51](https://github.com/urmzd/sr/commit/0344b5185807e77b726dd0f1c6d6d889d90989f2))
+
+### Miscellaneous
+
+- use sr-releaser GitHub App for release workflow (#2) ([47d63ba](https://github.com/urmzd/sr/commit/47d63bab5e3df103f2037df359369810e8dda36b))
+
+[Full Changelog](https://github.com/urmzd/sr/compare/v2.4.1...v2.4.2)
+
+
 ## 2.4.1 (2026-03-23)
 
 ### Bug Fixes
