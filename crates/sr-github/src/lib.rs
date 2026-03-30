@@ -14,6 +14,15 @@ struct ReleaseResponse {
     id: u64,
     html_url: String,
     upload_url: String,
+    #[serde(default)]
+    assets: Vec<ReleaseAsset>,
+}
+
+#[derive(serde::Deserialize)]
+struct ReleaseAsset {
+    id: u64,
+    name: String,
+    browser_download_url: String,
 }
 
 impl GitHubProvider {
@@ -193,6 +202,136 @@ impl VcsProvider for GitHubProvider {
             .read_json()
             .map_err(|e| ReleaseError::Vcs(format!("failed to parse release response: {e}")))?;
         Ok(updated.html_url)
+    }
+
+    fn sync_floating_release(
+        &self,
+        floating_tag: &str,
+        versioned_tag: &str,
+    ) -> Result<(), ReleaseError> {
+        // Get the versioned release to read its assets and metadata
+        let versioned = self.get_release_by_tag(versioned_tag)?;
+
+        // Create or update the floating tag release
+        let floating_release = if self.release_exists(floating_tag)? {
+            let existing = self.get_release_by_tag(floating_tag)?;
+            // Delete existing assets first
+            for asset in &existing.assets {
+                let url = format!(
+                    "{}/repos/{}/{}/releases/assets/{}",
+                    self.api_url(),
+                    self.owner,
+                    self.repo,
+                    asset.id
+                );
+                let _ = self
+                    .agent()
+                    .delete(&url)
+                    .header("Authorization", &format!("Bearer {}", self.token))
+                    .header("Accept", "application/vnd.github+json")
+                    .header("X-GitHub-Api-Version", "2022-11-28")
+                    .header("User-Agent", "sr-github")
+                    .call();
+            }
+            // Update the release metadata and ensure it's not marked as latest
+            let url = format!(
+                "{}/repos/{}/{}/releases/{}",
+                self.api_url(),
+                self.owner,
+                self.repo,
+                existing.id
+            );
+            let payload = serde_json::json!({
+                "tag_name": floating_tag,
+                "name": floating_tag,
+                "body": format!("Points to {versioned_tag}. Use this tag for GitHub Actions."),
+                "make_latest": "false",
+            });
+            self.agent()
+                .patch(&url)
+                .header("Authorization", &format!("Bearer {}", self.token))
+                .header("Accept", "application/vnd.github+json")
+                .header("X-GitHub-Api-Version", "2022-11-28")
+                .header("User-Agent", "sr-github")
+                .send_json(&payload)
+                .map_err(|e| {
+                    ReleaseError::Vcs(format!("GitHub API PATCH floating release: {e}"))
+                })?;
+            self.get_release_by_tag(floating_tag)?
+        } else {
+            let url = format!(
+                "{}/repos/{}/{}/releases",
+                self.api_url(),
+                self.owner,
+                self.repo
+            );
+            let payload = serde_json::json!({
+                "tag_name": floating_tag,
+                "name": floating_tag,
+                "body": format!("Points to {versioned_tag}. Use this tag for GitHub Actions."),
+                "make_latest": "false",
+            });
+            let resp = self
+                .agent()
+                .post(&url)
+                .header("Authorization", &format!("Bearer {}", self.token))
+                .header("Accept", "application/vnd.github+json")
+                .header("X-GitHub-Api-Version", "2022-11-28")
+                .header("User-Agent", "sr-github")
+                .send_json(&payload)
+                .map_err(|e| ReleaseError::Vcs(format!("GitHub API POST floating release: {e}")))?;
+            resp.into_body()
+                .read_json()
+                .map_err(|e| ReleaseError::Vcs(format!("failed to parse release response: {e}")))?
+        };
+
+        // Copy assets from the versioned release to the floating release
+        if !versioned.assets.is_empty() {
+            let upload_base = floating_release
+                .upload_url
+                .split('{')
+                .next()
+                .unwrap_or(&floating_release.upload_url);
+
+            for asset in &versioned.assets {
+                // Download the asset from the versioned release
+                let data = self
+                    .agent()
+                    .get(&asset.browser_download_url)
+                    .header("Authorization", &format!("Bearer {}", self.token))
+                    .header("Accept", "application/octet-stream")
+                    .header("User-Agent", "sr-github")
+                    .call()
+                    .map_err(|e| ReleaseError::Vcs(format!("download asset {}: {e}", asset.name)))?
+                    .into_body()
+                    .read_to_vec()
+                    .map_err(|e| {
+                        ReleaseError::Vcs(format!("read asset body {}: {e}", asset.name))
+                    })?;
+
+                let content_type = mime_from_extension(&asset.name);
+                let url = format!("{}?name={}", upload_base, asset.name);
+
+                self.agent()
+                    .post(&url)
+                    .header("Authorization", &format!("Bearer {}", self.token))
+                    .header("Accept", "application/vnd.github+json")
+                    .header("X-GitHub-Api-Version", "2022-11-28")
+                    .header("User-Agent", "sr-github")
+                    .header("Content-Type", content_type)
+                    .send(&data[..])
+                    .map_err(|e| {
+                        ReleaseError::Vcs(format!("upload asset {} to floating: {e}", asset.name))
+                    })?;
+            }
+        }
+
+        eprintln!(
+            "Synced floating release {floating_tag} with {} ({} asset(s))",
+            versioned_tag,
+            versioned.assets.len()
+        );
+        Ok(())
     }
 
     fn upload_assets(&self, tag: &str, files: &[&str]) -> Result<(), ReleaseError> {

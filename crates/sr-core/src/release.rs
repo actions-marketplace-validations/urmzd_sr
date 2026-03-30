@@ -73,6 +73,16 @@ pub trait VcsProvider: Send + Sync {
         self.create_release(tag, name, body, prerelease, draft)
     }
 
+    /// Sync a floating tag release (e.g. v3) with the versioned release (e.g. v3.4.0).
+    /// Creates or updates the floating release and copies assets from the versioned release.
+    fn sync_floating_release(
+        &self,
+        _floating_tag: &str,
+        _versioned_tag: &str,
+    ) -> Result<(), ReleaseError> {
+        Ok(())
+    }
+
     /// Upload asset files to an existing release identified by tag.
     fn upload_assets(&self, _tag: &str, _files: &[&str]) -> Result<(), ReleaseError> {
         Ok(())
@@ -494,7 +504,15 @@ where
             eprintln!("  Re-run with --force to retry.");
         }
 
-        // 12. Run post-release command if configured
+        // 12. Sync floating tag release with versioned release assets
+        if let Some(ref floating) = plan.floating_tag_name
+            && let Some(ref vcs) = self.vcs
+            && let Err(e) = vcs.sync_floating_release(floating, &plan.tag_name)
+        {
+            eprintln!("warning: failed to sync floating release {floating}: {e}");
+        }
+
+        // 13. Run post-release command if configured
         if let Some(ref cmd) = self.config.post_release_command {
             eprintln!("Running post-release command: {cmd}");
             run_lifecycle_hook(cmd, &version_str, &plan.tag_name, "post_release_command")?;
