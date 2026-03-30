@@ -1,5 +1,14 @@
 # Changelog
 
+## 2.4.7 (2026-03-30)
+
+### Bug Fixes
+
+- **ci**: build before release to sync floating tag assets ([3f299a9](https://github.com/urmzd/sr/commit/3f299a90667c0e8f6be8d51a41f7234b962e2855))
+
+[Full Changelog](https://github.com/urmzd/sr/compare/v2.4.6...v2.4.7)
+
+
 ## 2.4.6 (2026-03-30)
 
 ### Bug Fixes
