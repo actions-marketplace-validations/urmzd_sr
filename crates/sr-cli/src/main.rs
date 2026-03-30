@@ -7,7 +7,7 @@ use sr_core::changelog::DefaultChangelogFormatter;
 use sr_core::commit::DefaultCommitParser;
 use sr_core::config::{DEFAULT_CONFIG_FILE, LEGACY_CONFIG_FILE, ReleaseConfig};
 use sr_core::error::ReleaseError;
-use sr_core::release::{ReleaseStrategy, TrunkReleaseStrategy, VcsProvider};
+use sr_core::release::{ReleaseStrategy, TrunkReleaseStrategy};
 use sr_git::NativeGitRepository;
 use sr_github::GitHubProvider;
 
@@ -201,37 +201,7 @@ enum PlanFormat {
     Json,
 }
 
-/// A no-op VcsProvider used when GITHUB_TOKEN is not available.
-struct NoopVcsProvider;
-
-impl VcsProvider for NoopVcsProvider {
-    fn create_release(
-        &self,
-        _tag: &str,
-        _name: &str,
-        _body: &str,
-        _prerelease: bool,
-        _draft: bool,
-    ) -> Result<String, sr_core::error::ReleaseError> {
-        Ok(String::new())
-    }
-
-    fn compare_url(
-        &self,
-        _base: &str,
-        _head: &str,
-    ) -> Result<String, sr_core::error::ReleaseError> {
-        Ok(String::new())
-    }
-
-    fn release_exists(&self, _tag: &str) -> Result<bool, sr_core::error::ReleaseError> {
-        Ok(false)
-    }
-
-    fn delete_release(&self, _tag: &str) -> Result<(), sr_core::error::ReleaseError> {
-        Ok(())
-    }
-}
+use sr_core::release::NoopVcsProvider;
 
 fn build_local_strategy(
     config: ReleaseConfig,
@@ -256,7 +226,7 @@ fn build_local_strategy(
     );
     Ok(TrunkReleaseStrategy {
         git,
-        vcs: None,
+        vcs: NoopVcsProvider,
         parser: DefaultCommitParser,
         formatter,
         config,
@@ -296,7 +266,7 @@ fn build_full_strategy(
 
     Ok(TrunkReleaseStrategy {
         git,
-        vcs: Some(vcs),
+        vcs,
         parser: DefaultCommitParser,
         formatter,
         config,

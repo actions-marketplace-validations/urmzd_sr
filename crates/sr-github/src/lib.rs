@@ -304,6 +304,8 @@ impl VcsProvider for GitHubProvider {
                     .call()
                     .map_err(|e| ReleaseError::Vcs(format!("download asset {}: {e}", asset.name)))?
                     .into_body()
+                    .with_config()
+                    .limit(512 * 1024 * 1024)
                     .read_to_vec()
                     .map_err(|e| {
                         ReleaseError::Vcs(format!("read asset body {}: {e}", asset.name))
