@@ -63,14 +63,15 @@ pub trait VcsProvider: Send + Sync {
     /// preserving any previously uploaded assets.
     fn update_release(
         &self,
-        tag: &str,
-        name: &str,
-        body: &str,
-        prerelease: bool,
-        draft: bool,
+        _tag: &str,
+        _name: &str,
+        _body: &str,
+        _prerelease: bool,
+        _draft: bool,
     ) -> Result<String, ReleaseError> {
-        self.delete_release(tag)?;
-        self.create_release(tag, name, body, prerelease, draft)
+        Err(ReleaseError::Vcs(
+            "update_release not implemented for this provider".into(),
+        ))
     }
 
     /// Sync a floating tag release (e.g. v3) with the versioned release (e.g. v3.4.0).
@@ -94,10 +95,39 @@ pub trait VcsProvider: Send + Sync {
     }
 }
 
+/// A no-op VcsProvider that silently succeeds. Used when no remote VCS
+/// (e.g. GitHub) is configured.
+pub struct NoopVcsProvider;
+
+impl VcsProvider for NoopVcsProvider {
+    fn create_release(
+        &self,
+        _tag: &str,
+        _name: &str,
+        _body: &str,
+        _prerelease: bool,
+        _draft: bool,
+    ) -> Result<String, ReleaseError> {
+        Ok(String::new())
+    }
+
+    fn compare_url(&self, _base: &str, _head: &str) -> Result<String, ReleaseError> {
+        Ok(String::new())
+    }
+
+    fn release_exists(&self, _tag: &str) -> Result<bool, ReleaseError> {
+        Ok(false)
+    }
+
+    fn delete_release(&self, _tag: &str) -> Result<(), ReleaseError> {
+        Ok(())
+    }
+}
+
 /// Concrete release strategy implementing the trunk-based release flow.
 pub struct TrunkReleaseStrategy<G, V, C, F> {
     pub git: G,
-    pub vcs: Option<V>,
+    pub vcs: V,
     pub parser: C,
     pub formatter: F,
     pub config: ReleaseConfig,
@@ -114,19 +144,22 @@ where
 {
     fn format_changelog(&self, plan: &ReleasePlan) -> Result<String, ReleaseError> {
         let today = today_string();
-        let compare_url = self.vcs.as_ref().and_then(|vcs| {
-            let base = match &plan.current_version {
-                Some(v) => format!("{}{v}", self.config.tag_prefix),
-                None => return None,
-            };
-            vcs.compare_url(&base, &plan.tag_name).ok()
-        });
+        let compare_url = match &plan.current_version {
+            Some(v) => {
+                let base = format!("{}{v}", self.config.tag_prefix);
+                self.vcs
+                    .compare_url(&base, &plan.tag_name)
+                    .ok()
+                    .filter(|s| !s.is_empty())
+            }
+            None => None,
+        };
         let entry = ChangelogEntry {
             version: plan.next_version.to_string(),
             date: today,
             commits: plan.commits.clone(),
             compare_url,
-            repo_url: self.vcs.as_ref().and_then(|v| v.repo_url()),
+            repo_url: self.vcs.repo_url(),
         };
         self.formatter.format(&[entry])
     }
@@ -292,30 +325,73 @@ where
     fn execute(&self, plan: &ReleasePlan, dry_run: bool) -> Result<(), ReleaseError> {
         let version_str = plan.next_version.to_string();
 
+        self.run_lifecycle_command(
+            &self.config.pre_release_command,
+            "pre_release_command",
+            &version_str,
+            &plan.tag_name,
+            dry_run,
+        )?;
+
+        let changelog_body = self.format_changelog(plan)?;
+
+        self.bump_and_build(plan, &version_str, &changelog_body, dry_run)?;
+        self.create_and_push_tags(plan, &changelog_body, dry_run)?;
+        self.create_or_update_release(plan, &changelog_body, dry_run)?;
+        self.upload_artifacts(plan, dry_run)?;
+        self.verify_and_sync_release(plan, dry_run)?;
+
+        self.run_lifecycle_command(
+            &self.config.post_release_command,
+            "post_release_command",
+            &version_str,
+            &plan.tag_name,
+            dry_run,
+        )?;
+
         if dry_run {
-            let changelog_body = self.format_changelog(plan)?;
-            if let Some(ref cmd) = self.config.pre_release_command {
-                eprintln!("[dry-run] Would run pre-release command: {cmd}");
-            }
-            let sign_label = if self.config.sign_tags {
-                " (signed)"
+            eprintln!("[dry-run] Changelog:\n{changelog_body}");
+        } else {
+            eprintln!("Released {}", plan.tag_name);
+        }
+        Ok(())
+    }
+}
+
+impl<G, V, C, F> TrunkReleaseStrategy<G, V, C, F>
+where
+    G: GitRepository,
+    V: VcsProvider,
+    C: CommitParser,
+    F: ChangelogFormatter,
+{
+    fn run_lifecycle_command(
+        &self,
+        command: &Option<String>,
+        label: &str,
+        version: &str,
+        tag: &str,
+        dry_run: bool,
+    ) -> Result<(), ReleaseError> {
+        if let Some(cmd) = command {
+            if dry_run {
+                eprintln!("[dry-run] Would run {label}: {cmd}");
             } else {
-                ""
-            };
-            eprintln!("[dry-run] Would create tag: {}{sign_label}", plan.tag_name);
-            eprintln!("[dry-run] Would push tag: {}", plan.tag_name);
-            if let Some(ref floating) = plan.floating_tag_name {
-                eprintln!("[dry-run] Would create/update floating tag: {floating}");
-                eprintln!("[dry-run] Would force-push floating tag: {floating}");
+                eprintln!("Running {label}: {cmd}");
+                run_lifecycle_hook(cmd, version, tag, label)?;
             }
-            if self.vcs.is_some() {
-                let draft_label = if self.config.draft { " (draft)" } else { "" };
-                let release_name = self.release_name(plan);
-                eprintln!(
-                    "[dry-run] Would create GitHub release \"{release_name}\" for {}{draft_label}",
-                    plan.tag_name
-                );
-            }
+        }
+        Ok(())
+    }
+
+    fn bump_and_build(
+        &self,
+        plan: &ReleasePlan,
+        version_str: &str,
+        changelog_body: &str,
+        dry_run: bool,
+    ) -> Result<(), ReleaseError> {
+        if dry_run {
             for file in &self.config.version_files {
                 let filename = Path::new(file)
                     .file_name()
@@ -331,17 +407,6 @@ where
                     eprintln!("[dry-run] warning: unsupported version file, would skip: {file}");
                 }
             }
-            if !self.config.artifacts.is_empty() {
-                let resolved = resolve_artifact_globs(&self.config.artifacts)?;
-                if resolved.is_empty() {
-                    eprintln!("[dry-run] Artifact patterns matched no files");
-                } else {
-                    eprintln!("[dry-run] Would upload {} artifact(s):", resolved.len());
-                    for f in &resolved {
-                        eprintln!("[dry-run]   {f}");
-                    }
-                }
-            }
             if let Some(ref cmd) = self.config.build_command {
                 eprintln!("[dry-run] Would run build command: {cmd}");
             }
@@ -351,23 +416,10 @@ where
                     self.config.stage_files.join(", ")
                 );
             }
-            if let Some(ref cmd) = self.config.post_release_command {
-                eprintln!("[dry-run] Would run post-release command: {cmd}");
-            }
-            eprintln!("[dry-run] Changelog:\n{changelog_body}");
             return Ok(());
         }
 
-        // 0. Run pre-release command if configured
-        if let Some(ref cmd) = self.config.pre_release_command {
-            eprintln!("Running pre-release command: {cmd}");
-            run_lifecycle_hook(cmd, &version_str, &plan.tag_name, "pre_release_command")?;
-        }
-
-        // 1. Format changelog
-        let changelog_body = self.format_changelog(plan)?;
-
-        // 2. Snapshot files before mutation (for rollback on failure)
+        // Snapshot files before mutation (for rollback on failure)
         let mut file_snapshots: Vec<(String, Option<String>)> = Vec::new();
         for file in &self.config.version_files {
             let path = Path::new(file);
@@ -392,7 +444,7 @@ where
         }
 
         // Run the mutable pre-commit steps with rollback on failure
-        let bumped_files = match self.execute_pre_commit(plan, &version_str, &changelog_body) {
+        let files_to_stage = match self.execute_pre_commit(plan, version_str, changelog_body) {
             Ok(files) => files,
             Err(e) => {
                 eprintln!("error during pre-commit steps, restoring files...");
@@ -401,101 +453,164 @@ where
             }
         };
 
-        // 4. Resolve stage_files globs and collect all paths to stage
-        {
-            let mut paths_to_stage: Vec<String> = Vec::new();
-            if let Some(ref changelog_file) = self.config.changelog.file {
-                paths_to_stage.push(changelog_file.clone());
+        // Resolve stage_files globs and collect all paths to stage
+        let mut paths_to_stage: Vec<String> = Vec::new();
+        if let Some(ref changelog_file) = self.config.changelog.file {
+            paths_to_stage.push(changelog_file.clone());
+        }
+        for file in &files_to_stage {
+            paths_to_stage.push(file.clone());
+        }
+        if !self.config.stage_files.is_empty() {
+            let extra = resolve_globs(&self.config.stage_files).map_err(ReleaseError::Config)?;
+            paths_to_stage.extend(extra);
+        }
+        if !paths_to_stage.is_empty() {
+            let refs: Vec<&str> = paths_to_stage.iter().map(|s| s.as_str()).collect();
+            let commit_msg = format!("chore(release): {} [skip ci]", plan.tag_name);
+            self.git.stage_and_commit(&refs, &commit_msg)?;
+        }
+        Ok(())
+    }
+
+    fn create_and_push_tags(
+        &self,
+        plan: &ReleasePlan,
+        changelog_body: &str,
+        dry_run: bool,
+    ) -> Result<(), ReleaseError> {
+        if dry_run {
+            let sign_label = if self.config.sign_tags {
+                " (signed)"
+            } else {
+                ""
+            };
+            eprintln!("[dry-run] Would create tag: {}{sign_label}", plan.tag_name);
+            eprintln!("[dry-run] Would push commit and tag: {}", plan.tag_name);
+            if let Some(ref floating) = plan.floating_tag_name {
+                eprintln!("[dry-run] Would create/update floating tag: {floating}");
+                eprintln!("[dry-run] Would force-push floating tag: {floating}");
             }
-            for file in &bumped_files {
-                paths_to_stage.push(file.clone());
-            }
-            if !self.config.stage_files.is_empty() {
-                let extra = resolve_glob_patterns(&self.config.stage_files)?;
-                paths_to_stage.extend(extra);
-            }
-            if !paths_to_stage.is_empty() {
-                let refs: Vec<&str> = paths_to_stage.iter().map(|s| s.as_str()).collect();
-                let commit_msg = format!("chore(release): {} [skip ci]", plan.tag_name);
-                self.git.stage_and_commit(&refs, &commit_msg)?;
-            }
+            return Ok(());
         }
 
-        // 5. Create tag (skip if it already exists locally)
+        // Create tag (skip if it already exists locally)
         if !self.git.tag_exists(&plan.tag_name)? {
             let tag_message = format!("{}\n\n{}", plan.tag_name, changelog_body);
             self.git
                 .create_tag(&plan.tag_name, &tag_message, self.config.sign_tags)?;
         }
 
-        // 6. Push commit (safe to re-run — no-op if up to date)
+        // Push commit (safe to re-run — no-op if up to date)
         self.git.push()?;
 
-        // 7. Push tag (skip if tag already exists on remote)
+        // Push tag (skip if tag already exists on remote)
         if !self.git.remote_tag_exists(&plan.tag_name)? {
             self.git.push_tag(&plan.tag_name)?;
         }
 
-        // 8. Force-create and force-push floating tag (e.g. v3)
+        // Force-create and force-push floating tag (e.g. v3)
         if let Some(ref floating) = plan.floating_tag_name {
             self.git.force_create_tag(floating)?;
             self.git.force_push_tag(floating)?;
         }
+        Ok(())
+    }
 
-        // 9. Create or update GitHub release
-        let release_name = self.release_name(plan);
-        if let Some(ref vcs) = self.vcs {
-            if vcs.release_exists(&plan.tag_name)? {
-                // PATCH update preserves existing assets
-                vcs.update_release(
-                    &plan.tag_name,
-                    &release_name,
-                    &changelog_body,
-                    plan.prerelease,
-                    self.config.draft,
-                )?;
-            } else {
-                vcs.create_release(
-                    &plan.tag_name,
-                    &release_name,
-                    &changelog_body,
-                    plan.prerelease,
-                    self.config.draft,
-                )?;
-            }
+    fn create_or_update_release(
+        &self,
+        plan: &ReleasePlan,
+        changelog_body: &str,
+        dry_run: bool,
+    ) -> Result<(), ReleaseError> {
+        if dry_run {
+            let draft_label = if self.config.draft { " (draft)" } else { "" };
+            let release_name = self.release_name(plan);
+            eprintln!(
+                "[dry-run] Would create GitHub release \"{release_name}\" for {}{draft_label}",
+                plan.tag_name
+            );
+            return Ok(());
         }
 
-        // 10. Upload artifacts (with SHA256 checksums)
-        if let Some(ref vcs) = self.vcs
-            && !self.config.artifacts.is_empty()
-        {
-            let resolved = resolve_artifact_globs(&self.config.artifacts)?;
-            if !resolved.is_empty() {
-                // Generate SHA256 checksum sidecar files
-                let checksum_files = generate_checksums(&resolved)?;
-                let mut all_files = resolved.clone();
-                all_files.extend(checksum_files.iter().cloned());
+        let release_name = self.release_name(plan);
+        if self.vcs.release_exists(&plan.tag_name)? {
+            self.vcs.update_release(
+                &plan.tag_name,
+                &release_name,
+                changelog_body,
+                plan.prerelease,
+                self.config.draft,
+            )?;
+        } else {
+            self.vcs.create_release(
+                &plan.tag_name,
+                &release_name,
+                changelog_body,
+                plan.prerelease,
+                self.config.draft,
+            )?;
+        }
+        Ok(())
+    }
 
-                let file_refs: Vec<&str> = all_files.iter().map(|s| s.as_str()).collect();
-                vcs.upload_assets(&plan.tag_name, &file_refs)?;
-                eprintln!(
-                    "Uploaded {} artifact(s) + {} checksum(s) to {}",
-                    resolved.len(),
-                    checksum_files.len(),
-                    plan.tag_name
-                );
+    fn upload_artifacts(&self, plan: &ReleasePlan, dry_run: bool) -> Result<(), ReleaseError> {
+        if self.config.artifacts.is_empty() {
+            return Ok(());
+        }
 
-                // Clean up generated checksum files
-                for f in &checksum_files {
-                    let _ = fs::remove_file(f);
+        let resolved = resolve_globs(&self.config.artifacts).map_err(ReleaseError::Vcs)?;
+
+        if dry_run {
+            if resolved.is_empty() {
+                eprintln!("[dry-run] Artifact patterns matched no files");
+            } else {
+                eprintln!("[dry-run] Would upload {} artifact(s):", resolved.len());
+                for f in &resolved {
+                    eprintln!("[dry-run]   {f}");
                 }
             }
+            return Ok(());
         }
 
-        // 11. Verify release was created/updated successfully
-        if let Some(ref vcs) = self.vcs
-            && let Err(e) = vcs.verify_release(&plan.tag_name)
-        {
+        if !resolved.is_empty() {
+            let checksum_files = generate_checksums(&resolved)?;
+            let mut all_files = resolved.clone();
+            all_files.extend(checksum_files.iter().cloned());
+
+            let file_refs: Vec<&str> = all_files.iter().map(|s| s.as_str()).collect();
+            self.vcs.upload_assets(&plan.tag_name, &file_refs)?;
+            eprintln!(
+                "Uploaded {} artifact(s) + {} checksum(s) to {}",
+                resolved.len(),
+                checksum_files.len(),
+                plan.tag_name
+            );
+
+            for f in &checksum_files {
+                let _ = fs::remove_file(f);
+            }
+        }
+        Ok(())
+    }
+
+    fn verify_and_sync_release(
+        &self,
+        plan: &ReleasePlan,
+        dry_run: bool,
+    ) -> Result<(), ReleaseError> {
+        if dry_run {
+            eprintln!("[dry-run] Would verify release: {}", plan.tag_name);
+            if let Some(ref floating) = plan.floating_tag_name {
+                eprintln!(
+                    "[dry-run] Would sync floating release {floating} with {}",
+                    plan.tag_name
+                );
+            }
+            return Ok(());
+        }
+
+        if let Err(e) = self.vcs.verify_release(&plan.tag_name) {
             eprintln!("warning: post-release verification failed: {e}");
             eprintln!(
                 "  The tag {} was pushed but the GitHub release may be incomplete.",
@@ -504,32 +619,14 @@ where
             eprintln!("  Re-run with --force to retry.");
         }
 
-        // 12. Sync floating tag release with versioned release assets
         if let Some(ref floating) = plan.floating_tag_name
-            && let Some(ref vcs) = self.vcs
-            && let Err(e) = vcs.sync_floating_release(floating, &plan.tag_name)
+            && let Err(e) = self.vcs.sync_floating_release(floating, &plan.tag_name)
         {
             eprintln!("warning: failed to sync floating release {floating}: {e}");
         }
-
-        // 13. Run post-release command if configured
-        if let Some(ref cmd) = self.config.post_release_command {
-            eprintln!("Running post-release command: {cmd}");
-            run_lifecycle_hook(cmd, &version_str, &plan.tag_name, "post_release_command")?;
-        }
-
-        eprintln!("Released {}", plan.tag_name);
         Ok(())
     }
-}
 
-impl<G, V, C, F> TrunkReleaseStrategy<G, V, C, F>
-where
-    G: GitRepository,
-    V: VcsProvider,
-    C: CommitParser,
-    F: ChangelogFormatter,
-{
     /// Execute the mutable pre-commit steps: bump version files, write changelog, run build command.
     /// Returns the list of bumped files on success. On error the caller restores snapshots.
     fn execute_pre_commit(
@@ -539,13 +636,13 @@ where
         changelog_body: &str,
     ) -> Result<Vec<String>, ReleaseError> {
         // 2. Bump version files
-        let mut bumped_files: Vec<String> = Vec::new();
+        let mut files_to_stage: Vec<String> = Vec::new();
         for file in &self.config.version_files {
             match bump_version_file(Path::new(file), version_str) {
                 Ok(extra) => {
-                    bumped_files.push(file.clone());
+                    files_to_stage.push(file.clone());
                     for extra_path in extra {
-                        bumped_files.push(extra_path.to_string_lossy().into_owned());
+                        files_to_stage.push(extra_path.to_string_lossy().into_owned());
                     }
                 }
                 Err(e) if !self.config.version_files_strict => {
@@ -556,10 +653,10 @@ where
         }
 
         // 2.5. Auto-discover and stage lock files associated with bumped manifests
-        for lock_file in discover_lock_files(&bumped_files) {
+        for lock_file in discover_lock_files(&files_to_stage) {
             let lock_str = lock_file.to_string_lossy().into_owned();
-            if !bumped_files.contains(&lock_str) {
-                bumped_files.push(lock_str);
+            if !files_to_stage.contains(&lock_str) {
+                files_to_stage.push(lock_str);
             }
         }
 
@@ -591,7 +688,7 @@ where
             run_lifecycle_hook(cmd, version_str, &plan.tag_name, "build_command")?;
         }
 
-        Ok(bumped_files)
+        Ok(files_to_stage)
     }
 }
 
@@ -628,40 +725,20 @@ fn run_lifecycle_hook(
         .map_err(|e| ReleaseError::BuildCommand(format!("{label}: {e}")))
 }
 
-/// Resolve glob patterns into a list of file paths.
-fn resolve_glob_patterns(patterns: &[String]) -> Result<Vec<String>, ReleaseError> {
-    let mut files = Vec::new();
-    for pattern in patterns {
-        let paths = glob::glob(pattern)
-            .map_err(|e| ReleaseError::Config(format!("invalid glob pattern '{pattern}': {e}")))?;
-        for entry in paths {
-            match entry {
-                Ok(path) if path.is_file() => {
-                    files.push(path.to_string_lossy().into_owned());
-                }
-                Ok(_) => {}
-                Err(e) => {
-                    eprintln!("warning: glob error: {e}");
-                }
-            }
-        }
-    }
-    Ok(files)
-}
-
-fn resolve_artifact_globs(patterns: &[String]) -> Result<Vec<String>, ReleaseError> {
+/// Resolve glob patterns into a deduplicated, sorted list of file paths.
+fn resolve_globs(patterns: &[String]) -> Result<Vec<String>, String> {
     let mut files = std::collections::BTreeSet::new();
     for pattern in patterns {
-        let paths = glob::glob(pattern)
-            .map_err(|e| ReleaseError::Vcs(format!("invalid glob pattern '{pattern}': {e}")))?;
+        let paths =
+            glob::glob(pattern).map_err(|e| format!("invalid glob pattern '{pattern}': {e}"))?;
         for entry in paths {
             match entry {
                 Ok(path) if path.is_file() => {
                     files.insert(path.to_string_lossy().into_owned());
                 }
-                Ok(_) => {} // skip directories
+                Ok(_) => {}
                 Err(e) => {
-                    eprintln!("warning: glob error: {e}");
+                    return Err(format!("glob error for pattern '{pattern}': {e}"));
                 }
             }
         }
@@ -901,6 +978,21 @@ mod tests {
             Ok(())
         }
 
+        fn update_release(
+            &self,
+            tag: &str,
+            _name: &str,
+            body: &str,
+            _prerelease: bool,
+            _draft: bool,
+        ) -> Result<String, ReleaseError> {
+            let mut releases = self.releases.lock().unwrap();
+            if let Some(entry) = releases.iter_mut().find(|(t, _)| t == tag) {
+                entry.1 = body.to_string();
+            }
+            Ok(format!("https://github.com/test/release/{tag}"))
+        }
+
         fn upload_assets(&self, tag: &str, files: &[&str]) -> Result<(), ReleaseError> {
             self.uploaded_assets.lock().unwrap().push((
                 tag.to_string(),
@@ -934,7 +1026,7 @@ mod tests {
         let misc_section = config.misc_section.clone();
         TrunkReleaseStrategy {
             git: FakeGit::new(tags, commits),
-            vcs: Some(FakeVcs::new()),
+            vcs: FakeVcs::new(),
             parser: DefaultCommitParser,
             formatter: DefaultChangelogFormatter::new(None, types, breaking_section, misc_section),
             config,
@@ -1138,7 +1230,7 @@ mod tests {
         let plan = s.plan().unwrap();
         s.execute(&plan, false).unwrap();
 
-        let releases = s.vcs.as_ref().unwrap().releases.lock().unwrap();
+        let releases = s.vcs.releases.lock().unwrap();
         assert_eq!(releases.len(), 1);
         assert_eq!(releases[0].0, "v0.1.0");
         assert!(!releases[0].1.is_empty());
@@ -1207,8 +1299,6 @@ mod tests {
 
         // Pre-populate a release to simulate it already existing
         s.vcs
-            .as_ref()
-            .unwrap()
             .releases
             .lock()
             .unwrap()
@@ -1216,11 +1306,11 @@ mod tests {
 
         s.execute(&plan, false).unwrap();
 
-        // Should have deleted the old release and created a new one
-        let deleted = s.vcs.as_ref().unwrap().deleted_releases.lock().unwrap();
-        assert_eq!(*deleted, vec!["v0.1.0"]);
+        // Should have updated in place without deleting
+        let deleted = s.vcs.deleted_releases.lock().unwrap();
+        assert!(deleted.is_empty(), "update should not delete");
 
-        let releases = s.vcs.as_ref().unwrap().releases.lock().unwrap();
+        let releases = s.vcs.releases.lock().unwrap();
         assert_eq!(releases.len(), 1);
         assert_eq!(releases[0].0, "v0.1.0");
         assert_ne!(releases[0].1, "old notes");
@@ -1250,12 +1340,11 @@ mod tests {
         // Push (commit) should happen twice (always safe)
         assert_eq!(*s.git.push_count.lock().unwrap(), 2);
 
-        // Release should be deleted and recreated on second run
-        let deleted = s.vcs.as_ref().unwrap().deleted_releases.lock().unwrap();
-        assert_eq!(*deleted, vec!["v0.1.0"]);
+        // Release should be updated in place on second run (no delete)
+        let deleted = s.vcs.deleted_releases.lock().unwrap();
+        assert!(deleted.is_empty(), "update should not delete");
 
-        let releases = s.vcs.as_ref().unwrap().releases.lock().unwrap();
-        // One entry: delete removed the first, create added a replacement
+        let releases = s.vcs.releases.lock().unwrap();
         assert_eq!(releases.len(), 1);
         assert_eq!(releases[0].0, "v0.1.0");
     }
@@ -1353,7 +1442,7 @@ mod tests {
         let plan = s.plan().unwrap();
         s.execute(&plan, false).unwrap();
 
-        let uploaded = s.vcs.as_ref().unwrap().uploaded_assets.lock().unwrap();
+        let uploaded = s.vcs.uploaded_assets.lock().unwrap();
         assert_eq!(uploaded.len(), 1);
         assert_eq!(uploaded[0].0, "v0.1.0");
         // 2 artifacts + 2 SHA256 checksum sidecar files
@@ -1384,7 +1473,7 @@ mod tests {
         s.execute(&plan, true).unwrap();
 
         // No uploads should happen during dry-run
-        let uploaded = s.vcs.as_ref().unwrap().uploaded_assets.lock().unwrap();
+        let uploaded = s.vcs.uploaded_assets.lock().unwrap();
         assert!(uploaded.is_empty());
     }
 
@@ -1398,32 +1487,32 @@ mod tests {
         let plan = s.plan().unwrap();
         s.execute(&plan, false).unwrap();
 
-        let uploaded = s.vcs.as_ref().unwrap().uploaded_assets.lock().unwrap();
+        let uploaded = s.vcs.uploaded_assets.lock().unwrap();
         assert!(uploaded.is_empty());
     }
 
     #[test]
-    fn resolve_artifact_globs_basic() {
+    fn resolve_globs_basic() {
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(dir.path().join("a.txt"), "a").unwrap();
         std::fs::write(dir.path().join("b.txt"), "b").unwrap();
         std::fs::create_dir(dir.path().join("subdir")).unwrap();
 
         let pattern = dir.path().join("*.txt").to_str().unwrap().to_string();
-        let result = resolve_artifact_globs(&[pattern]).unwrap();
+        let result = resolve_globs(&[pattern]).unwrap();
         assert_eq!(result.len(), 2);
-        assert!(result.iter().any(|f| f.ends_with("a.txt")));
-        assert!(result.iter().any(|f| f.ends_with("b.txt")));
+        assert!(result.iter().any(|f: &String| f.ends_with("a.txt")));
+        assert!(result.iter().any(|f: &String| f.ends_with("b.txt")));
     }
 
     #[test]
-    fn resolve_artifact_globs_deduplicates() {
+    fn resolve_globs_deduplicates() {
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(dir.path().join("file.txt"), "data").unwrap();
 
         let pattern = dir.path().join("*.txt").to_str().unwrap().to_string();
         // Same pattern twice should not produce duplicates
-        let result = resolve_artifact_globs(&[pattern.clone(), pattern]).unwrap();
+        let result = resolve_globs(&[pattern.clone(), pattern]).unwrap();
         assert_eq!(result.len(), 1);
     }
 
