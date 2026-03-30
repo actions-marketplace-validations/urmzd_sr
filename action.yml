@@ -104,10 +104,12 @@ runs:
         esac
 
         BINARY_NAME="sr-${TARGET}"
-        DOWNLOAD_URL="https://github.com/${SR_REPO}/releases/download/${SR_REF}/${BINARY_NAME}"
+        BASE_URL="https://github.com/${SR_REPO}/releases/download/${SR_REF}"
 
         mkdir -p "$HOME/.local/bin"
-        curl -sSfL "$DOWNLOAD_URL" -o "$HOME/.local/bin/sr"
+        curl -sSfL "${BASE_URL}/${BINARY_NAME}" -o "$HOME/.local/bin/sr"
+        curl -sSfL "${BASE_URL}/${BINARY_NAME}.sha256" -o "/tmp/sr.sha256"
+        (cd "$HOME/.local/bin" && sed "s/${BINARY_NAME}/sr/" /tmp/sr.sha256 | sha256sum -c -)
         chmod +x "$HOME/.local/bin/sr"
         echo "$HOME/.local/bin" >> "$GITHUB_PATH"
 
