@@ -1,5 +1,19 @@
 # Changelog
 
+## 3.0.1 (2026-03-30)
+
+### Bug Fixes
+
+- swap floating release assets per-asset to minimise 404 window ([0be8abc](https://github.com/urmzd/sr/commit/0be8abc0f3678a003bd818fb32f04face9fffd9b))
+- use action ref directly for binary download URL ([622b693](https://github.com/urmzd/sr/commit/622b69398faf49b727ec202207891c674b18103f))
+
+### Documentation
+
+- update sr action references from v2 to v3 ([ac4a5a9](https://github.com/urmzd/sr/commit/ac4a5a901c66de8d08b2d4d57a507236638f1b0e))
+
+[Full Changelog](https://github.com/urmzd/sr/compare/v3.0.0...v3.0.1)
+
+
 ## 3.0.0 (2026-03-30)
 
 ### Breaking Changes
