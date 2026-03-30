@@ -1,5 +1,14 @@
 # Changelog
 
+## 3.0.2 (2026-03-30)
+
+### Bug Fixes
+
+- pass action context through env for composite action compatibility ([c21ddd3](https://github.com/urmzd/sr/commit/c21ddd312d3b656c476a3c294221c0e8fcc39029))
+
+[Full Changelog](https://github.com/urmzd/sr/compare/v3.0.1...v3.0.2)
+
+
 ## 3.0.1 (2026-03-30)
 
 ### Bug Fixes
