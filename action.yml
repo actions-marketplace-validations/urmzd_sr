@@ -95,37 +95,71 @@ runs:
 
         OS=$(uname -s | tr '[:upper:]' '[:lower:]')
         ARCH=$(uname -m)
-
         case "$ARCH" in
-          x86_64)  ARCH="x86_64" ;;
+          x86_64)        ARCH="x86_64" ;;
           aarch64|arm64) ARCH="aarch64" ;;
-          *) echo "Unsupported architecture: $ARCH"; exit 1 ;;
+          *) echo "Unsupported architecture: $ARCH" >&2; exit 1 ;;
         esac
-
         case "$OS" in
           linux)  TARGET="${ARCH}-unknown-linux-musl" ;;
           darwin) TARGET="${ARCH}-apple-darwin" ;;
-          *) echo "Unsupported OS: $OS"; exit 1 ;;
+          *) echo "Unsupported OS: $OS" >&2; exit 1 ;;
         esac
 
         BINARY_NAME="sr-${TARGET}"
-
+        DEST="$HOME/.local/bin/sr"
         mkdir -p "$HOME/.local/bin"
-        gh release download "$SR_REF" \
-          --repo "$SR_REPO" \
-          --pattern "$BINARY_NAME" \
-          --output "$HOME/.local/bin/sr"
+
+        # Resolve the action ref to a concrete release tag.
+        # Floating tags (e.g. v1) are git tags with no release attached; exact
+        # version tags (e.g. v1.2.3) have a release with binary assets.
+        API="https://api.github.com/repos/${SR_REPO}"
+
+        RELEASE_TAG=$(curl -fsSL \
+          -H "Authorization: token $GH_TOKEN" \
+          -H "Accept: application/vnd.github+json" \
+          "${API}/releases/tags/${SR_REF}" 2>/dev/null \
+          | grep '"tag_name"' | head -1 \
+          | sed 's/.*"tag_name": *"\([^"]*\)".*/\1/')
+
+        if [ -z "$RELEASE_TAG" ]; then
+          # Floating tag or non-release ref — find the latest release whose tag
+          # shares the same major version prefix (v1 -> v1.x.x).
+          RELEASES=$(curl -fsSL \
+            -H "Authorization: token $GH_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            "${API}/releases?per_page=20")
+          MAJOR=$(echo "$SR_REF" | grep -oE '^v[0-9]+')
+          if [ -n "$MAJOR" ]; then
+            RELEASE_TAG=$(echo "$RELEASES" | grep '"tag_name"' \
+              | grep "\"${MAJOR}\." | head -1 \
+              | sed 's/.*"tag_name": *"\([^"]*\)".*/\1/')
+          fi
+          # Last resort: absolute latest release
+          if [ -z "$RELEASE_TAG" ]; then
+            RELEASE_TAG=$(echo "$RELEASES" | grep '"tag_name"' | head -1 \
+              | sed 's/.*"tag_name": *"\([^"]*\)".*/\1/')
+          fi
+        fi
+
+        if [ -z "$RELEASE_TAG" ]; then
+          echo "Could not resolve ref '${SR_REF}' to a release tag" >&2
+          exit 1
+        fi
+
+        URL="https://github.com/${SR_REPO}/releases/download/${RELEASE_TAG}/${BINARY_NAME}"
+        curl -fsSL -H "Authorization: token $GH_TOKEN" "$URL" -o "$DEST"
 
         if [ -n "$SR_SHA256" ]; then
-          ACTUAL=$(sha256sum "$HOME/.local/bin/sr" | awk '{print $1}')
+          ACTUAL=$(sha256sum "$DEST" | awk '{print $1}')
           if [ "$ACTUAL" != "$SR_SHA256" ]; then
-            echo "SHA256 mismatch: expected $SR_SHA256, got $ACTUAL"
+            echo "SHA256 mismatch: expected $SR_SHA256, got $ACTUAL" >&2
             exit 1
           fi
           echo "SHA256 verified: $ACTUAL"
         fi
 
-        chmod +x "$HOME/.local/bin/sr"
+        chmod +x "$DEST"
         echo "$HOME/.local/bin" >> "$GITHUB_PATH"
 
     - name: Run sr
