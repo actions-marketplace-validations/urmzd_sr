@@ -1091,7 +1091,7 @@ dependencies = [
 
 [[package]]
 name = "sr-ai"
-version = "3.2.1"
+version = "3.2.2"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1111,7 +1111,7 @@ dependencies = [
 
 [[package]]
 name = "sr-cli"
-version = "3.2.1"
+version = "3.2.2"
 dependencies = [
  "anyhow",
  "clap",
@@ -1130,7 +1130,7 @@ dependencies = [
 
 [[package]]
 name = "sr-core"
-version = "3.2.1"
+version = "3.2.2"
 dependencies = [
  "anyhow",
  "glob",
@@ -1147,7 +1147,7 @@ dependencies = [
 
 [[package]]
 name = "sr-git"
-version = "3.2.1"
+version = "3.2.2"
 dependencies = [
  "base64",
  "semver",
@@ -1157,7 +1157,7 @@ dependencies = [
 
 [[package]]
 name = "sr-github"
-version = "3.2.1"
+version = "3.2.2"
 dependencies = [
  "serde",
  "serde_json",

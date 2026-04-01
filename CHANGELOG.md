@@ -1,5 +1,14 @@
 # Changelog
 
+## 3.2.3 (2026-04-01)
+
+### Refactoring
+
+- normalize action.yml metadata and remove redundant required fields ([8791859](https://github.com/urmzd/sr/commit/87918595fddac4f749ae4559fb59a3a24bc8a8fd))
+
+[Full Changelog](https://github.com/urmzd/sr/compare/v3.2.2...v3.2.3)
+
+
 ## 3.2.2 (2026-04-01)
 
 ### Refactoring
