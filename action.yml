@@ -70,8 +70,12 @@ runs:
     - name: Configure git identity
       shell: bash
       run: |
+        echo "::group::Configure git identity"
+        echo "Setting user.name=${{ inputs.git-user-name }}"
         git config user.name "${{ inputs.git-user-name }}"
+        echo "Setting user.email=${{ inputs.git-user-email }}"
         git config user.email "${{ inputs.git-user-email }}"
+        echo "::endgroup::"
 
     - name: Download sr binary
       shell: bash
@@ -82,28 +86,32 @@ runs:
         SR_SHA256: ${{ inputs.sha256 }}
       run: |
         set -euo pipefail
+        echo "::group::Download sr binary"
 
         OS=$(uname -s | tr '[:upper:]' '[:lower:]')
         ARCH=$(uname -m)
+        echo "Detected OS=$OS ARCH=$ARCH"
         case "$ARCH" in
           x86_64)        ARCH="x86_64" ;;
           aarch64|arm64) ARCH="aarch64" ;;
-          *) echo "Unsupported architecture: $ARCH" >&2; exit 1 ;;
+          *) echo "::error::Unsupported architecture: $ARCH"; exit 1 ;;
         esac
         case "$OS" in
           linux)  TARGET="${ARCH}-unknown-linux-musl" ;;
           darwin) TARGET="${ARCH}-apple-darwin" ;;
-          *) echo "Unsupported OS: $OS" >&2; exit 1 ;;
+          *) echo "::error::Unsupported OS: $OS"; exit 1 ;;
         esac
 
         BINARY_NAME="sr-${TARGET}"
         DEST="$HOME/.local/bin/sr"
         mkdir -p "$HOME/.local/bin"
+        echo "Target=$TARGET Binary=$BINARY_NAME"
 
         # Resolve the action ref to a concrete release tag.
         # Floating tags (e.g. v1) are git tags with no release attached; exact
         # version tags (e.g. v1.2.3) have a release with binary assets.
         API="https://api.github.com/repos/${SR_REPO}"
+        echo "Resolving ref=${SR_REF} via ${API}"
 
         RELEASE_TAG=$(curl -fsSL \
           -H "Authorization: token $GH_TOKEN" \
@@ -113,6 +121,7 @@ runs:
           | sed 's/.*"tag_name": *"\([^"]*\)".*/\1/')
 
         if [ -z "$RELEASE_TAG" ]; then
+          echo "No exact release for ref=${SR_REF}, searching by major version..."
           # Floating tag or non-release ref — find the latest release whose tag
           # shares the same major version prefix (v1 -> v1.x.x).
           RELEASES=$(curl -fsSL \
@@ -121,29 +130,33 @@ runs:
             "${API}/releases?per_page=20")
           MAJOR=$(echo "$SR_REF" | grep -oE '^v[0-9]+')
           if [ -n "$MAJOR" ]; then
+            echo "Matching major version prefix: ${MAJOR}"
             RELEASE_TAG=$(echo "$RELEASES" | grep '"tag_name"' \
               | grep "\"${MAJOR}\." | head -1 \
               | sed 's/.*"tag_name": *"\([^"]*\)".*/\1/')
           fi
           # Last resort: absolute latest release
           if [ -z "$RELEASE_TAG" ]; then
+            echo "Falling back to latest release"
             RELEASE_TAG=$(echo "$RELEASES" | grep '"tag_name"' | head -1 \
               | sed 's/.*"tag_name": *"\([^"]*\)".*/\1/')
           fi
         fi
 
         if [ -z "$RELEASE_TAG" ]; then
-          echo "Could not resolve ref '${SR_REF}' to a release tag" >&2
+          echo "::error::Could not resolve ref '${SR_REF}' to a release tag"
           exit 1
         fi
 
+        echo "Resolved release tag: ${RELEASE_TAG}"
         URL="https://github.com/${SR_REPO}/releases/download/${RELEASE_TAG}/${BINARY_NAME}"
+        echo "Downloading from ${URL}"
         curl -fsSL -H "Authorization: token $GH_TOKEN" "$URL" -o "$DEST"
 
         if [ -n "$SR_SHA256" ]; then
           ACTUAL=$(sha256sum "$DEST" | awk '{print $1}')
           if [ "$ACTUAL" != "$SR_SHA256" ]; then
-            echo "SHA256 mismatch: expected $SR_SHA256, got $ACTUAL" >&2
+            echo "::error::SHA256 mismatch: expected $SR_SHA256, got $ACTUAL"
             exit 1
           fi
           echo "SHA256 verified: $ACTUAL"
@@ -151,6 +164,8 @@ runs:
 
         chmod +x "$DEST"
         echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+        echo "sr binary installed to ${DEST}"
+        echo "::endgroup::"
 
     - name: Run sr
       id: release
@@ -160,6 +175,7 @@ runs:
         SR_BUILD_COMMAND: ${{ inputs.build-command }}
       run: |
         set -uo pipefail
+        echo "::group::Run sr"
         ARGS=()
         ARGS+=("${{ inputs.command }}")
         if [ "${{ inputs.dry-run }}" = "true" ]; then
@@ -183,10 +199,12 @@ runs:
           ARGS+=("--build-command" "bash $_BUILD_SCRIPT")
         fi
 
+        echo "Executing: sr ${ARGS[*]}"
         set +e
         JSON_OUTPUT=$(sr "${ARGS[@]}" | tail -1)
         EXIT_CODE=${PIPESTATUS[0]}
         set -e
+        echo "sr exited with code ${EXIT_CODE}"
 
         if [ "$EXIT_CODE" -eq 0 ]; then
           echo "json=${JSON_OUTPUT}" >> "$GITHUB_OUTPUT"
@@ -198,7 +216,7 @@ runs:
           echo "commit_count=$(echo "$JSON_OUTPUT" | jq -r '.commit_count')" >> "$GITHUB_OUTPUT"
           echo "released=true" >> "$GITHUB_OUTPUT"
         elif [ "$EXIT_CODE" -eq 2 ]; then
-          echo "No releasable changes found"
+          echo "::notice::No releasable changes found"
           echo "json=" >> "$GITHUB_OUTPUT"
           echo "version=" >> "$GITHUB_OUTPUT"
           echo "previous_version=" >> "$GITHUB_OUTPUT"
@@ -216,5 +234,8 @@ runs:
           echo "floating_tag=" >> "$GITHUB_OUTPUT"
           echo "commit_count=" >> "$GITHUB_OUTPUT"
           echo "released=false" >> "$GITHUB_OUTPUT"
+          echo "::error::sr failed with exit code ${EXIT_CODE}"
+          echo "::endgroup::"
           exit "$EXIT_CODE"
         fi
+        echo "::endgroup::"
