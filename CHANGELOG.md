@@ -1,5 +1,18 @@
 # Changelog
 
+## 3.2.4 (2026-04-01)
+
+### Bug Fixes
+
+- **action**: remove auth from release API calls for cross-repo compatibility ([8705e59](https://github.com/urmzd/sr/commit/8705e591c9a11c4f17c9b06c973f0164dcdd8289))
+
+### Miscellaneous
+
+- add diagnostic logging to action.yml ([464c0db](https://github.com/urmzd/sr/commit/464c0dbbcadfa75851293f579ae9c10daa94c334))
+
+[Full Changelog](https://github.com/urmzd/sr/compare/v3.2.3...v3.2.4)
+
+
 ## 3.2.3 (2026-04-01)
 
 ### Refactoring
