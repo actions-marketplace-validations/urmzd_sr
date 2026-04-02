@@ -13,6 +13,16 @@ set -eu
 
 REPO="urmzd/sr"
 
+# curl with optional auth — uses GH_TOKEN or GITHUB_TOKEN if set.
+gh_curl() {
+    token="${GH_TOKEN:-${GITHUB_TOKEN:-}}"
+    if [ -n "$token" ]; then
+        curl -fsSL -H "Authorization: token $token" "$@"
+    else
+        curl -fsSL "$@"
+    fi
+}
+
 main() {
     os=$(uname -s)
     arch=$(uname -m)
@@ -43,7 +53,7 @@ main() {
     if [ -n "${SR_VERSION:-}" ]; then
         tag="$SR_VERSION"
     else
-        tag=$(curl -fsSL "https://api.github.com/repos/$REPO/releases/latest" \
+        tag=$(gh_curl "https://api.github.com/repos/$REPO/releases/latest" \
             | sed -n 's/.*"tag_name": *"\([^"]*\)".*/\1/p')
         if [ -z "$tag" ]; then
             err "Failed to fetch latest release tag"
@@ -57,7 +67,7 @@ main() {
     mkdir -p "$install_dir"
 
     echo "Downloading sr $tag for $target..."
-    curl -fsSL "$url" -o "$install_dir/sr"
+    gh_curl "$url" -o "$install_dir/sr"
 
     if [ -n "${SR_SHA256:-}" ]; then
         if command -v sha256sum >/dev/null 2>&1; then
