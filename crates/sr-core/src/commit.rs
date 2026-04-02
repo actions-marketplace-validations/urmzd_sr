@@ -115,7 +115,7 @@ pub fn default_commit_types() -> Vec<CommitType> {
         },
         CommitType {
             name: "refactor".into(),
-            bump: None,
+            bump: Some(BumpLevel::Patch),
             section: Some("Refactoring".into()),
         },
         CommitType {
