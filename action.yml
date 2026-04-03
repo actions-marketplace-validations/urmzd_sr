@@ -80,7 +80,6 @@ runs:
     - name: Download sr binary
       shell: bash
       env:
-        GH_TOKEN: ${{ inputs.github-token }}
         SR_REPO: ${{ github.action_repository }}
         SR_REF: ${{ github.action_ref }}
         SR_SHA256: ${{ inputs.sha256 }}
@@ -118,15 +117,10 @@ runs:
             exit 1
           fi
 
-          local auth_args=()
-          if [ -n "${GH_TOKEN:-}" ]; then
-            auth_args+=(-H "Authorization: token ${GH_TOKEN}")
-          fi
-
           # Try exact tag match (works for non-floating refs like v1.2.3).
           # curl without -f so a 404 returns JSON instead of exit 22.
           local tag
-          tag=$(curl -sSL "${auth_args[@]}" -H "Accept: application/vnd.github+json" \
+          tag=$(curl -sSL -H "Accept: application/vnd.github+json" \
             "${api}/releases/tags/${ref}" 2>/dev/null \
             | jq -r '.tag_name // empty') || true
 
@@ -137,7 +131,7 @@ runs:
 
           echo "No exact release for ref=${ref}, searching by major version..." >&2
           local releases
-          releases=$(curl -fsSL "${auth_args[@]}" -H "Accept: application/vnd.github+json" \
+          releases=$(curl -fsSL -H "Accept: application/vnd.github+json" \
             "${api}/releases?per_page=20")
 
           local major
@@ -168,7 +162,7 @@ runs:
         echo "Resolved release tag: ${RELEASE_TAG}"
         URL="https://github.com/${SR_REPO}/releases/download/${RELEASE_TAG}/${BINARY_NAME}"
         echo "Downloading from ${URL}"
-        curl -fsSL -H "Authorization: token $GH_TOKEN" "$URL" -o "$DEST"
+        curl -fsSL "$URL" -o "$DEST"
 
         if [ -n "$SR_SHA256" ]; then
           ACTUAL=$(sha256sum "$DEST" | awk '{print $1}')
