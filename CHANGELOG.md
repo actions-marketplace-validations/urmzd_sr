@@ -1,5 +1,14 @@
 # Changelog
 
+## 3.3.2 (2026-04-03)
+
+### Bug Fixes
+
+- **action**: remove unnecessary GitHub token authentication (#15) ([502b4fe](https://github.com/urmzd/sr/commit/502b4fe8c434ab86b987115f8814f7cac940a472))
+
+[Full Changelog](https://github.com/urmzd/sr/compare/v3.3.1...v3.3.2)
+
+
 ## 3.3.1 (2026-04-03)
 
 ### Bug Fixes
