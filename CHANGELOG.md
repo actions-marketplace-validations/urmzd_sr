@@ -1,5 +1,14 @@
 # Changelog
 
+## 3.3.1 (2026-04-03)
+
+### Bug Fixes
+
+- **action**: always download sr binary from public GitHub (#14) ([faa54bb](https://github.com/urmzd/sr/commit/faa54bb658999ad5d6397ab76fa4a047c524c856))
+
+[Full Changelog](https://github.com/urmzd/sr/compare/v3.3.0...v3.3.1)
+
+
 ## 3.3.0 (2026-04-02)
 
 ### Features
