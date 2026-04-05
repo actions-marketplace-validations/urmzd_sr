@@ -46,67 +46,17 @@ pub struct CommitArgs {
     pub no_cache: bool,
 }
 
-const COMMIT_SCHEMA: &str = r#"{
-    "type": "object",
-    "properties": {
-        "commits": {
-            "type": "array",
-            "items": {
-                "type": "object",
-                "properties": {
-                    "order": { "type": "integer" },
-                    "message": { "type": "string", "description": "Header: type(scope): subject — imperative, lowercase, no period, max 72 chars" },
-                    "body": { "type": "string", "description": "Body: explain WHY the change was made, wrap at 72 chars" },
-                    "footer": { "type": "string", "description": "Footer: BREAKING CHANGE notes, Closes/Fixes/Refs #issue, etc." },
-                    "files": { "type": "array", "items": { "type": "string" } }
-                },
-                "required": ["order", "message", "body", "files"]
-            }
-        }
-    },
-    "required": ["commits"]
-}"#;
-
-fn build_system_prompt(commit_pattern: &str, type_names: &[&str]) -> String {
-    let types_list = type_names.join(", ");
-    format!(
-        r#"You are an expert at analyzing git diffs and creating atomic, well-organized commits following the Angular Conventional Commits standard.
-
-HEADER ("message" field):
-- Must match this regex: {commit_pattern}
-- Format: type(scope): subject
-- Valid types ONLY: {types_list}
-- NEVER invent types. Words like db, auth, api, etc. are scopes, not types. Use the semantically correct type for the change (e.g. feat(db): add user cache migration, fix(auth): resolve token expiry)
-- scope is optional but recommended when applicable
-- subject: imperative mood, lowercase first letter, no period at end, max 72 chars
-
-BODY ("body" field — required):
-- Explain WHY the change was made, not what changed (the diff shows that)
-- Use imperative tense ("add" not "added")
-- Wrap at 72 characters
-
-FOOTER ("footer" field — optional):
-- BREAKING CHANGE: description of what breaks and migration path
-- Closes #N, Fixes #N, Refs #N for issue references
-- Only include when relevant
-
-COMMIT ORGANIZATION:
-- Each commit must be atomic: one logical change per commit
-- Every changed file must appear in exactly one commit
-- CRITICAL: A file must NEVER appear in more than one commit. The execution engine stages entire files, not individual hunks. Splitting one file across commits will fail.
-- If one file contains multiple logical changes, place it in the most fitting commit and note the secondary changes in that commit's body.
-- Order: infrastructure/config -> core library -> features -> tests -> docs
-- File paths must be relative to the repository root and match exactly as git reports them"#
-    )
-}
+use crate::prompts;
 
 enum CacheStatus {
     /// No cache used (--no-cache, or cache unavailable)
     None,
     /// Exact cache hit
     Cached,
-    /// Incremental hit
-    Incremental,
+    /// DAG patch — plan reused with targeted changes
+    Patched,
+    /// Patch + AI for unplaced files
+    PatchedWithAi,
 }
 
 pub async fn run(args: &CommitArgs, backend_config: &BackendConfig) -> Result<()> {
@@ -122,7 +72,7 @@ pub async fn run(args: &CommitArgs, backend_config: &BackendConfig) -> Result<()
         .transpose()?
         .unwrap_or_default();
     let type_names: Vec<&str> = config.types.iter().map(|t| t.name.as_str()).collect();
-    let system_prompt = build_system_prompt(&config.commit_pattern, &type_names);
+    let system_prompt = prompts::commit::system_prompt(&config.commit_pattern, &type_names);
 
     // Phase 2: Check for changes
     let has_changes = if args.staged {
@@ -186,45 +136,85 @@ pub async fn run(args: &CommitArgs, backend_config: &BackendConfig) -> Result<()
             );
             (cached_plan, CacheStatus::Cached)
         }
-        Some(CacheLookup::IncrementalHit {
-            previous_plan,
+        Some(CacheLookup::PatchHit {
+            plan: patched_plan,
+            dirty_commits,
+            changed_files,
+            unplaced_files,
             delta_summary,
         }) => {
-            let spinner = ui::spinner(&format!(
-                "Analyzing changes with {backend_name} (incremental)..."
-            ));
-            let (tx, event_handler) = spawn_event_handler(&spinner);
+            if unplaced_files.is_empty() {
+                // Pure patch — no AI needed. Plan can execute directly.
+                let dirty_label = if dirty_commits.is_empty() {
+                    "no dirty commits".to_string()
+                } else {
+                    format!(
+                        "{} dirty commit{}",
+                        dirty_commits.len(),
+                        if dirty_commits.len() == 1 { "" } else { "s" }
+                    )
+                };
+                ui::phase_ok(
+                    "Plan patched",
+                    Some(&format!(
+                        "{} commits · {} · {} changed file{}",
+                        patched_plan.commits.len(),
+                        dirty_label,
+                        changed_files.len(),
+                        if changed_files.len() == 1 { "" } else { "s" }
+                    )),
+                );
+                (patched_plan, CacheStatus::Patched)
+            } else {
+                // Unplaced files need AI to integrate into the plan.
+                let spinner = ui::spinner(&format!(
+                    "Placing {} new file{} with {backend_name}...",
+                    unplaced_files.len(),
+                    if unplaced_files.len() == 1 { "" } else { "s" }
+                ));
+                let (tx, event_handler) = spawn_event_handler(&spinner);
 
-            let user_prompt =
-                build_incremental_prompt(args, &repo, &previous_plan, &delta_summary)?;
+                let user_prompt = prompts::commit::patch_prompt(
+                    args.staged,
+                    &repo.root().to_string_lossy(),
+                    args.message.as_deref(),
+                    &patched_plan,
+                    &unplaced_files,
+                    &delta_summary,
+                );
 
-            let request = AiRequest {
-                system_prompt: system_prompt.clone(),
-                user_prompt,
-                json_schema: Some(COMMIT_SCHEMA.to_string()),
-                working_dir: repo.root().to_string_lossy().to_string(),
-            };
+                let request = AiRequest {
+                    system_prompt: system_prompt.clone(),
+                    user_prompt,
+                    json_schema: Some(prompts::commit::SCHEMA.to_string()),
+                    working_dir: repo.root().to_string_lossy().to_string(),
+                };
 
-            let response = backend.request(&request, Some(tx)).await?;
-            let _ = event_handler.await;
+                let response = backend.request(&request, Some(tx)).await?;
+                let _ = event_handler.await;
 
-            let p: CommitPlan = parse_plan(&response.text)?;
+                let p: CommitPlan = parse_plan(&response.text)?;
 
-            let detail = format_done_detail(p.commits.len(), "incremental", &response.usage);
-            ui::spinner_done(&spinner, Some(&detail));
+                let detail = format_done_detail(p.commits.len(), "patched", &response.usage);
+                ui::spinner_done(&spinner, Some(&detail));
 
-            (p, CacheStatus::Incremental)
+                (p, CacheStatus::PatchedWithAi)
+            }
         }
         _ => {
             let spinner = ui::spinner(&format!("Analyzing changes with {backend_name}..."));
             let (tx, event_handler) = spawn_event_handler(&spinner);
 
-            let user_prompt = build_user_prompt(args, &repo)?;
+            let user_prompt = prompts::commit::user_prompt(
+                args.staged,
+                &repo.root().to_string_lossy(),
+                args.message.as_deref(),
+            );
 
             let request = AiRequest {
                 system_prompt: system_prompt.clone(),
                 user_prompt,
-                json_schema: Some(COMMIT_SCHEMA.to_string()),
+                json_schema: Some(prompts::commit::SCHEMA.to_string()),
                 working_dir: repo.root().to_string_lossy().to_string(),
             };
 
@@ -262,7 +252,8 @@ pub async fn run(args: &CommitArgs, backend_config: &BackendConfig) -> Result<()
     // Display plan
     let cache_label: Option<&str> = match &cache_status {
         CacheStatus::Cached => Some("cached"),
-        CacheStatus::Incremental => Some("incremental"),
+        CacheStatus::Patched => Some("patched"),
+        CacheStatus::PatchedWithAi => Some("patched+ai"),
         CacheStatus::None => None,
     };
     ui::display_plan(&plan, &statuses, cache_label);
@@ -295,52 +286,6 @@ pub async fn run(args: &CommitArgs, backend_config: &BackendConfig) -> Result<()
     snapshot.success();
 
     Ok(())
-}
-
-fn build_user_prompt(args: &CommitArgs, repo: &GitRepo) -> Result<String> {
-    let git_root = repo.root().to_string_lossy();
-
-    let mut prompt = if args.staged {
-        "Analyze the staged git changes and group them into atomic commits.\n\
-         Use `git diff --cached` and `git diff --cached --stat` to inspect what's staged."
-            .to_string()
-    } else {
-        "Analyze all git changes (staged, unstaged, and untracked) and group them into atomic commits.\n\
-         Use `git diff HEAD`, `git diff --cached`, `git diff`, `git status --porcelain`, and \
-         `git ls-files --others --exclude-standard` to inspect changes."
-            .to_string()
-    };
-
-    prompt.push_str(&format!("\nThe git repository root is: {git_root}"));
-
-    if let Some(msg) = &args.message {
-        prompt.push_str(&format!("\n\nAdditional context from the user:\n{msg}"));
-    }
-
-    Ok(prompt)
-}
-
-fn build_incremental_prompt(
-    args: &CommitArgs,
-    repo: &GitRepo,
-    previous_plan: &CommitPlan,
-    delta_summary: &str,
-) -> Result<String> {
-    let mut prompt = build_user_prompt(args, repo)?;
-
-    let previous_json =
-        serde_json::to_string_pretty(previous_plan).unwrap_or_else(|_| "{}".to_string());
-
-    prompt.push_str(&format!(
-        "\n\n--- INCREMENTAL HINTS ---\n\
-         A previous commit plan exists for a similar set of changes. \
-         Maintain the groupings for unchanged files where possible. \
-         Only re-analyze files that have changed.\n\n\
-         Previous plan:\n```json\n{previous_json}\n```\n\n\
-         File delta:\n{delta_summary}"
-    ));
-
-    Ok(prompt)
 }
 
 /// Validate that no file appears in multiple commits. If duplicates are found,

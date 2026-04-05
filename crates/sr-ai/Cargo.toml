@@ -26,5 +26,6 @@ async-trait = { workspace = true }
 dirs = { workspace = true }
 regex = { workspace = true }
 tempfile = { workspace = true }
+minijinja = { workspace = true }
 
 [dev-dependencies]

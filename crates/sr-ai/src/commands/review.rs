@@ -14,10 +14,6 @@ pub struct ReviewArgs {
     pub base: Option<String>,
 }
 
-const SYSTEM_PROMPT: &str = "You are an expert code reviewer. Analyze the provided git diff and give a thorough code review. \
-Focus on: bugs, logic errors, security issues, performance problems, code style, and maintainability. \
-Be specific about file names and line numbers. Organize feedback by severity (critical, warning, suggestion).";
-
 pub async fn run(args: &ReviewArgs, backend_config: &BackendConfig) -> Result<()> {
     let repo = GitRepo::discover()?;
     let backend = resolve_backend(backend_config).await?;
@@ -37,7 +33,7 @@ pub async fn run(args: &ReviewArgs, backend_config: &BackendConfig) -> Result<()
     let spinner = ui::spinner(&format!("Reviewing changes with {}...", backend.name()));
 
     let request = AiRequest {
-        system_prompt: SYSTEM_PROMPT.to_string(),
+        system_prompt: crate::prompts::review::SYSTEM_PROMPT.to_string(),
         user_prompt: format!("Review this diff:\n\n{diff}"),
         json_schema: None,
         working_dir: repo.root().to_string_lossy().to_string(),

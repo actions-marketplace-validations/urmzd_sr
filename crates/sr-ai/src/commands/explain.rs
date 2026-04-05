@@ -10,10 +10,6 @@ pub struct ExplainArgs {
     pub rev: String,
 }
 
-const SYSTEM_PROMPT: &str = "You are an expert at explaining git commits. Given a git show output, \
-explain what the commit does, why the changes were made, and any notable patterns or concerns. \
-Be concise but thorough.";
-
 pub async fn run(args: &ExplainArgs, backend_config: &BackendConfig) -> Result<()> {
     let repo = GitRepo::discover()?;
     let backend = resolve_backend(backend_config).await?;
@@ -23,7 +19,7 @@ pub async fn run(args: &ExplainArgs, backend_config: &BackendConfig) -> Result<(
     let spinner = ui::spinner(&format!("Explaining commit with {}...", backend.name()));
 
     let request = AiRequest {
-        system_prompt: SYSTEM_PROMPT.to_string(),
+        system_prompt: crate::prompts::explain::SYSTEM_PROMPT.to_string(),
         user_prompt: format!("Explain this commit:\n\n{show}"),
         json_schema: None,
         working_dir: repo.root().to_string_lossy().to_string(),

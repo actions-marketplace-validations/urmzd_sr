@@ -12,12 +12,22 @@ use store::{CacheEntry, cache_dir, list_entries, read_entry, write_entry};
 pub enum CacheLookup {
     /// Exact fingerprint match — use cached plan directly.
     ExactHit(CommitPlan),
-    /// Partial match — provides previous plan + delta summary as hints.
-    IncrementalHit {
-        previous_plan: CommitPlan,
+    /// Some files changed — patched plan with affected commits marked.
+    /// When `unplaced_files` is empty, the plan can be executed directly
+    /// (no AI call needed). When non-empty, AI is called with a targeted
+    /// prompt to place only the new files.
+    PatchHit {
+        plan: CommitPlan,
+        /// Indices of commits that contain changed/removed files.
+        dirty_commits: Vec<usize>,
+        /// Files that changed content (exist in a commit but hash differs).
+        changed_files: Vec<String>,
+        /// New files not belonging to any cached commit (need AI placement).
+        unplaced_files: Vec<String>,
+        /// Human-readable delta summary for AI prompt.
         delta_summary: String,
     },
-    /// No useful cached data.
+    /// Too much changed or no cache — full AI run.
     Miss,
 }
 
@@ -51,7 +61,12 @@ impl CacheManager {
         })
     }
 
-    /// Look up the cache. Returns ExactHit, IncrementalHit, or Miss.
+    /// Look up the cache. Returns ExactHit, PatchHit, or Miss.
+    ///
+    /// **ExactHit**: all file fingerprints match — use plan as-is.
+    /// **PatchHit**: some files changed — identifies dirty commits and unplaced files.
+    ///   When `unplaced_files` is empty the plan can execute without an AI call.
+    /// **Miss**: too much changed (>50%) or no cache.
     pub fn lookup(&self) -> CacheLookup {
         // Tier 1: exact match
         let exact_path = store::entry_path(&self.dir, &self.state_key);
@@ -59,7 +74,7 @@ impl CacheManager {
             return CacheLookup::ExactHit(entry.plan);
         }
 
-        // Tier 2: find best incremental candidate
+        // Tier 2: find best candidate for DAG-aware patching
         let entries = match list_entries(&self.dir) {
             Ok(e) => e,
             Err(_) => return CacheLookup::Miss,
@@ -69,21 +84,72 @@ impl CacheManager {
             return CacheLookup::Miss;
         }
 
-        // Pick the most recent entry as the incremental candidate
+        // Pick the most recent entry as the patch candidate
         let candidate = &entries[0];
         let delta = compute_delta(&candidate.fingerprints, &self.fingerprints);
 
-        // Only use incremental if ≤50% of files changed
+        // Bail if >50% changed — not worth patching
         let total = self.fingerprints.len().max(candidate.fingerprints.len());
-        let changed = delta.changed.len() + delta.added.len() + delta.removed.len();
-
-        if total == 0 || changed * 2 > total {
+        let change_count = delta.changed.len() + delta.added.len() + delta.removed.len();
+        if total == 0 || change_count * 2 > total {
             return CacheLookup::Miss;
         }
 
+        // Map changed/removed files to commits in the cached plan (dirty commits).
+        let affected_files: std::collections::BTreeSet<&str> = delta
+            .changed
+            .iter()
+            .chain(delta.removed.iter())
+            .map(|s| s.as_str())
+            .collect();
+
+        let mut dirty_commits = Vec::new();
+        for (i, commit) in candidate.plan.commits.iter().enumerate() {
+            if commit
+                .files
+                .iter()
+                .any(|f| affected_files.contains(f.as_str()))
+            {
+                dirty_commits.push(i);
+            }
+        }
+
+        // Files in `added` that don't belong to any commit are "unplaced".
+        let plan_files: std::collections::BTreeSet<&str> = candidate
+            .plan
+            .commits
+            .iter()
+            .flat_map(|c| c.files.iter().map(|f| f.as_str()))
+            .collect();
+
+        let unplaced_files: Vec<String> = delta
+            .added
+            .iter()
+            .filter(|f| !plan_files.contains(f.as_str()))
+            .cloned()
+            .collect();
+
+        // Build a patched plan: remove files from commits that were deleted,
+        // keep the rest as-is. The dirty_commits list tells the caller which
+        // commits need re-validation.
+        let mut plan = candidate.plan.clone();
+        if !delta.removed.is_empty() {
+            let removed_set: std::collections::BTreeSet<&str> =
+                delta.removed.iter().map(|s| s.as_str()).collect();
+            for commit in &mut plan.commits {
+                commit.files.retain(|f| !removed_set.contains(f.as_str()));
+            }
+            // Drop commits that became empty after removal.
+            plan.commits.retain(|c| !c.files.is_empty());
+        }
+
         let summary = format_delta_summary(&delta);
-        CacheLookup::IncrementalHit {
-            previous_plan: candidate.plan.clone(),
+
+        CacheLookup::PatchHit {
+            plan,
+            dirty_commits,
+            changed_files: delta.changed.clone(),
+            unplaced_files,
             delta_summary: summary,
         }
     }

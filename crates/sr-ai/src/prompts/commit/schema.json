@@ -1,0 +1,20 @@
+{
+    "type": "object",
+    "properties": {
+        "commits": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "order": { "type": "integer" },
+                    "message": { "type": "string", "description": "Header: type(scope): subject — imperative, lowercase, no period, max 72 chars" },
+                    "body": { "type": "string", "description": "Body: explain WHY the change was made, wrap at 72 chars" },
+                    "footer": { "type": "string", "description": "Footer: BREAKING CHANGE notes, Closes/Fixes/Refs #issue, etc." },
+                    "files": { "type": "array", "items": { "type": "string" } }
+                },
+                "required": ["order", "message", "body", "files"]
+            }
+        }
+    },
+    "required": ["commits"]
+}

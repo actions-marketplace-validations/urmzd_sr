@@ -9,10 +9,6 @@ pub struct AskArgs {
     pub question: Vec<String>,
 }
 
-const SYSTEM_PROMPT: &str = "You are an expert software engineer helping answer questions about a git repository. \
-Use the available git tools to explore the codebase and answer the question thoroughly. \
-Be specific and reference file paths when relevant.";
-
 pub async fn run(args: &AskArgs, backend_config: &BackendConfig) -> Result<()> {
     let repo = GitRepo::discover()?;
     let backend = resolve_backend(backend_config).await?;
@@ -25,7 +21,7 @@ pub async fn run(args: &AskArgs, backend_config: &BackendConfig) -> Result<()> {
     let spinner = ui::spinner(&format!("Thinking with {}...", backend.name()));
 
     let request = AiRequest {
-        system_prompt: SYSTEM_PROMPT.to_string(),
+        system_prompt: crate::prompts::ask::SYSTEM_PROMPT.to_string(),
         user_prompt: question,
         json_schema: None,
         working_dir: repo.root().to_string_lossy().to_string(),

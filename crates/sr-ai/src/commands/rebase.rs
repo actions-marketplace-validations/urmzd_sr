@@ -43,26 +43,7 @@ pub struct ReorganizedCommit {
     pub footer: Option<String>,
 }
 
-const REORGANIZE_SCHEMA: &str = r#"{
-    "type": "object",
-    "properties": {
-        "commits": {
-            "type": "array",
-            "items": {
-                "type": "object",
-                "properties": {
-                    "original_sha": { "type": "string", "description": "Short SHA of the original commit" },
-                    "action": { "type": "string", "enum": ["pick", "reword", "squash", "drop"], "description": "Rebase action" },
-                    "message": { "type": "string", "description": "New commit message header (type(scope): subject)" },
-                    "body": { "type": "string", "description": "New commit body (optional)" },
-                    "footer": { "type": "string", "description": "New commit footer (optional)" }
-                },
-                "required": ["original_sha", "action", "message"]
-            }
-        }
-    },
-    "required": ["commits"]
-}"#;
+use crate::prompts;
 
 /// Guard that removes a temp directory on drop.
 struct TmpDirGuard(std::path::PathBuf);
@@ -165,8 +146,8 @@ pub async fn run(args: &RebaseArgs, backend_config: &BackendConfig) -> Result<()
     );
 
     // Build prompt
-    let system_prompt = build_system_prompt(&config.commit_pattern, &type_names);
-    let user_prompt = build_user_prompt(&log, args.message.as_deref())?;
+    let system_prompt = prompts::rebase::system_prompt(&config.commit_pattern, &type_names);
+    let user_prompt = prompts::rebase::user_prompt(&log, args.message.as_deref());
 
     let spinner = ui::spinner(&format!("Analyzing commits with {backend_name}..."));
     let (tx, event_handler) = spawn_event_handler(&spinner);
@@ -174,7 +155,7 @@ pub async fn run(args: &RebaseArgs, backend_config: &BackendConfig) -> Result<()
     let request = AiRequest {
         system_prompt,
         user_prompt,
-        json_schema: Some(REORGANIZE_SCHEMA.to_string()),
+        json_schema: Some(prompts::rebase::SCHEMA.to_string()),
         working_dir: repo.root().to_string_lossy().to_string(),
     };
 
@@ -212,48 +193,6 @@ pub async fn run(args: &RebaseArgs, backend_config: &BackendConfig) -> Result<()
     execute_rebase(&repo, &plan, commit_count)?;
 
     Ok(())
-}
-
-fn build_system_prompt(commit_pattern: &str, type_names: &[&str]) -> String {
-    let types_list = type_names.join(", ");
-    format!(
-        r#"You are an expert at organizing git history. You will be given a list of recent commits and asked to reorganize them.
-
-You can:
-- **pick**: keep the commit as-is (but you may reword the message)
-- **reword**: keep the commit but change the message
-- **squash**: fold the commit into the previous one (combine their changes)
-- **drop**: remove the commit entirely (use sparingly — only for truly empty or duplicate commits)
-
-COMMIT MESSAGE FORMAT:
-- Must match this regex: {commit_pattern}
-- Format: type(scope): subject
-- Valid types ONLY: {types_list}
-- subject: imperative mood, lowercase first letter, no period at end, max 72 chars
-
-RULES:
-- Maintain the chronological order of commits (oldest first) unless reordering improves logical grouping
-- The first commit in the list CANNOT be "squash" — squash folds into the previous commit
-- Prefer "reword" over "squash" when commits are logically distinct
-- Only squash commits that are genuinely part of the same logical change
-- Every original commit SHA must appear exactly once in your output
-- If the commits are already well-organized, return them all as "pick" with improved messages if needed"#
-    )
-}
-
-fn build_user_prompt(log: &str, extra: Option<&str>) -> Result<String> {
-    let mut prompt = format!(
-        "Analyze these recent commits and suggest how to reorganize them for a cleaner history.\n\n\
-         Commits (oldest first):\n```\n{log}\n```"
-    );
-
-    if let Some(msg) = extra {
-        prompt.push_str(&format!(
-            "\n\nAdditional instructions from the user:\n{msg}"
-        ));
-    }
-
-    Ok(prompt)
 }
 
 fn display_plan(plan: &ReorganizePlan) {

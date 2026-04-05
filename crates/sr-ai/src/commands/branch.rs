@@ -13,11 +13,6 @@ pub struct BranchArgs {
     pub create: bool,
 }
 
-const SYSTEM_PROMPT: &str = "You are an expert at naming git branches following conventional patterns. \
-Suggest a branch name using the format: type/short-description (e.g., feat/add-user-auth, fix/login-redirect). \
-Valid types: feat, fix, docs, style, refactor, perf, test, build, ci, chore. \
-Respond with ONLY the branch name, nothing else.";
-
 pub async fn run(args: &BranchArgs, backend_config: &BackendConfig) -> Result<()> {
     let repo = GitRepo::discover()?;
     let backend = resolve_backend(backend_config).await?;
@@ -38,7 +33,7 @@ pub async fn run(args: &BranchArgs, backend_config: &BackendConfig) -> Result<()
     ));
 
     let request = AiRequest {
-        system_prompt: SYSTEM_PROMPT.to_string(),
+        system_prompt: crate::prompts::branch::SYSTEM_PROMPT.to_string(),
         user_prompt: prompt,
         json_schema: None,
         working_dir: repo.root().to_string_lossy().to_string(),

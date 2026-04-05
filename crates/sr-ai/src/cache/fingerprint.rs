@@ -62,6 +62,25 @@ pub fn compute_fingerprints(repo_root: &Path, staged_only: bool) -> BTreeMap<Str
     fingerprints
 }
 
+/// Hash the staged blob content for a file using `git show :0:<path>`.
+///
+/// This is deterministic (unlike diff-based hashing, which varies by base).
+/// Returns `None` if the file is not staged or git fails.
+pub fn staged_blob_hash(repo_root: &Path, path: &str) -> Option<String> {
+    let spec = format!(":0:{path}");
+    let output = Command::new("git")
+        .args(["-C", repo_root.to_str()?])
+        .args(["show", &spec])
+        .output()
+        .ok()?;
+
+    if !output.status.success() {
+        return None;
+    }
+
+    Some(sha256_hex(&output.stdout))
+}
+
 pub fn sha256_hex(data: &[u8]) -> String {
     let mut hasher = Sha256::new();
     hasher.update(data);

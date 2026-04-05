@@ -25,20 +25,6 @@ struct PrOutput {
     body: String,
 }
 
-const SYSTEM_PROMPT: &str = "You are an expert at writing pull request descriptions. \
-Given the commits and diff for a branch, generate a PR title and body. \
-The title should be concise (under 70 chars). \
-The body should have a ## Summary section with bullet points and a ## Test plan section.";
-
-const PR_SCHEMA: &str = r#"{
-    "type": "object",
-    "properties": {
-        "title": { "type": "string", "description": "PR title, under 70 chars" },
-        "body": { "type": "string", "description": "PR body in markdown with ## Summary and ## Test plan sections" }
-    },
-    "required": ["title", "body"]
-}"#;
-
 pub async fn run(args: &PrArgs, backend_config: &BackendConfig) -> Result<()> {
     let repo = GitRepo::discover()?;
     let backend = resolve_backend(backend_config).await?;
@@ -50,13 +36,13 @@ pub async fn run(args: &PrArgs, backend_config: &BackendConfig) -> Result<()> {
     let spinner = ui::spinner(&format!("Generating PR with {}...", backend.name()));
 
     let request = AiRequest {
-        system_prompt: SYSTEM_PROMPT.to_string(),
+        system_prompt: crate::prompts::pr::SYSTEM_PROMPT.to_string(),
         user_prompt: format!(
             "Generate a PR title and body for branch '{branch}' targeting '{}'.\n\n\
              Commits:\n{log}\n\nDiff:\n{diff}",
             args.base
         ),
-        json_schema: Some(PR_SCHEMA.to_string()),
+        json_schema: Some(crate::prompts::pr::SCHEMA.to_string()),
         working_dir: repo.root().to_string_lossy().to_string(),
     };
 
