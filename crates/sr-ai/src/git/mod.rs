@@ -826,7 +826,11 @@ mod tests {
 
         // Create 30 files and commit them
         for i in 0..30 {
-            fs::write(repo.root.join(format!("file_{i}.txt")), format!("content {i}")).unwrap();
+            fs::write(
+                repo.root.join(format!("file_{i}.txt")),
+                format!("content {i}"),
+            )
+            .unwrap();
         }
         repo.git(&["add", "."]).unwrap();
         repo.git(&["commit", "-m", "add files"]).unwrap();
@@ -980,7 +984,11 @@ mod tests {
 
         // Add brand new files (never committed)
         for i in 0..5 {
-            fs::write(repo.root.join(format!("brand_new_{i}.txt")), format!("new {i}")).unwrap();
+            fs::write(
+                repo.root.join(format!("brand_new_{i}.txt")),
+                format!("new {i}"),
+            )
+            .unwrap();
         }
         repo.git(&["add", "."]).unwrap();
 
@@ -1098,7 +1106,11 @@ mod tests {
 
         // Create and commit files
         for i in 0..10 {
-            fs::write(repo.root.join(format!("src_{i}.txt")), format!("content {i}")).unwrap();
+            fs::write(
+                repo.root.join(format!("src_{i}.txt")),
+                format!("content {i}"),
+            )
+            .unwrap();
         }
         repo.git(&["add", "."]).unwrap();
         repo.git(&["commit", "-m", "add source files"]).unwrap();

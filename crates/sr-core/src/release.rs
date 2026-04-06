@@ -1146,11 +1146,7 @@ mod tests {
 
     #[test]
     fn execute_dry_run_no_side_effects() {
-        let s = make_strategy(
-            vec![],
-            vec![raw_commit("feat: something")],
-            test_config(),
-        );
+        let s = make_strategy(vec![], vec![raw_commit("feat: something")], test_config());
         let plan = s.plan().unwrap();
         s.execute(&plan, true).unwrap();
 
@@ -1160,11 +1156,7 @@ mod tests {
 
     #[test]
     fn execute_creates_and_pushes_tag() {
-        let s = make_strategy(
-            vec![],
-            vec![raw_commit("feat: something")],
-            test_config(),
-        );
+        let s = make_strategy(vec![], vec![raw_commit("feat: something")], test_config());
         let plan = s.plan().unwrap();
         s.execute(&plan, false).unwrap();
 
@@ -1174,11 +1166,7 @@ mod tests {
 
     #[test]
     fn execute_calls_vcs_create_release() {
-        let s = make_strategy(
-            vec![],
-            vec![raw_commit("feat: something")],
-            test_config(),
-        );
+        let s = make_strategy(vec![], vec![raw_commit("feat: something")], test_config());
         let plan = s.plan().unwrap();
         s.execute(&plan, false).unwrap();
 
@@ -1220,11 +1208,7 @@ mod tests {
 
     #[test]
     fn execute_skips_existing_tag() {
-        let s = make_strategy(
-            vec![],
-            vec![raw_commit("feat: something")],
-            test_config(),
-        );
+        let s = make_strategy(vec![], vec![raw_commit("feat: something")], test_config());
         let plan = s.plan().unwrap();
 
         // Pre-populate the tag to simulate it already existing
@@ -1242,11 +1226,7 @@ mod tests {
 
     #[test]
     fn execute_skips_existing_release() {
-        let s = make_strategy(
-            vec![],
-            vec![raw_commit("feat: something")],
-            test_config(),
-        );
+        let s = make_strategy(vec![], vec![raw_commit("feat: something")], test_config());
         let plan = s.plan().unwrap();
 
         // Pre-populate a release to simulate it already existing
@@ -1270,11 +1250,7 @@ mod tests {
 
     #[test]
     fn execute_idempotent_rerun() {
-        let s = make_strategy(
-            vec![],
-            vec![raw_commit("feat: something")],
-            test_config(),
-        );
+        let s = make_strategy(vec![], vec![raw_commit("feat: something")], test_config());
         let plan = s.plan().unwrap();
 
         // First run
@@ -1423,11 +1399,7 @@ mod tests {
 
     #[test]
     fn execute_no_artifacts_skips_upload() {
-        let s = make_strategy(
-            vec![],
-            vec![raw_commit("feat: something")],
-            test_config(),
-        );
+        let s = make_strategy(vec![], vec![raw_commit("feat: something")], test_config());
         let plan = s.plan().unwrap();
         s.execute(&plan, false).unwrap();
 
