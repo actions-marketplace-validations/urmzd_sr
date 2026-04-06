@@ -1,5 +1,14 @@
 # Changelog
 
+## 3.3.4 (2026-04-06)
+
+### Refactoring
+
+- simplify release tag resolution in action ([28c94ca](https://github.com/urmzd/sr/commit/28c94ca5e5fdccb4e25e380b49b568467423cebd))
+
+[Full Changelog](https://github.com/urmzd/sr/compare/v3.3.3...v3.3.4)
+
+
 ## 3.3.3 (2026-04-06)
 
 ### Bug Fixes
