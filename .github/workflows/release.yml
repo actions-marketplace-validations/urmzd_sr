@@ -51,11 +51,6 @@ jobs:
         with:
           path: sr
 
-      - uses: actions/checkout@v6
-        with:
-          repository: urmzd/agentspec
-          path: agentspec
-
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
@@ -120,11 +115,6 @@ jobs:
           fetch-depth: 0
           token: ${{ steps.app-token.outputs.token }}
           path: sr
-
-      - uses: actions/checkout@v6
-        with:
-          repository: urmzd/agentspec
-          path: agentspec
 
       - name: Configure git identity
         working-directory: sr
