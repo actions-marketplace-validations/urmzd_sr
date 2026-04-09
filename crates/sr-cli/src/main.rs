@@ -339,25 +339,17 @@ fn ensure_hooks_synced() {
     }
 }
 
-const INSTALL_SCRIPT_URL: &str = "https://raw.githubusercontent.com/urmzd/sr/main/install.sh";
-
-/// Self-update sr by running the install script.
+/// Self-update sr via GitHub Releases.
 fn self_update() -> anyhow::Result<()> {
     eprintln!("current version: {}", env!("CARGO_PKG_VERSION"));
 
-    // Resolve install dir to wherever the current binary lives
-    let current_exe = std::env::current_exe()?;
-    let install_dir = current_exe
-        .parent()
-        .ok_or_else(|| anyhow::anyhow!("cannot determine install directory"))?;
-
-    let status = std::process::Command::new("sh")
-        .args(["-c", &format!("curl -fsSL {INSTALL_SCRIPT_URL} | sh")])
-        .env("SR_INSTALL_DIR", install_dir)
-        .status()?;
-
-    if !status.success() {
-        anyhow::bail!("install script failed");
+    match agentspec_update::self_update("urmzd/sr", env!("CARGO_PKG_VERSION"), "sr")? {
+        agentspec_update::UpdateResult::AlreadyUpToDate => {
+            eprintln!("already up to date");
+        }
+        agentspec_update::UpdateResult::Updated { from, to } => {
+            eprintln!("updated: {from} → {to}");
+        }
     }
 
     Ok(())
