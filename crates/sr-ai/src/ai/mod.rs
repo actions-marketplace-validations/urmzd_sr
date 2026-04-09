@@ -1,7 +1,7 @@
 // Re-export agentspec-provider types under the names sr uses internally.
 pub use agentspec_provider::{
-    AiEvent, AiProvider as AiBackend, AiRequest, AiResponse, AiUsage, Capability, LocalBackend as Backend,
-    ProviderConfig, Sandbox, resolve_local_provider,
+    AiEvent, AiProvider as AiBackend, AiRequest, AiResponse, AiUsage, Capability,
+    LocalBackend as Backend, ProviderConfig, Sandbox, resolve_local_provider,
 };
 
 /// CLI-facing config — maps to ProviderConfig with sr's read-only sandbox.
