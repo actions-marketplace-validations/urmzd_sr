@@ -1,58 +1,16 @@
 use crate::ai::AiUsage;
 use crate::commands::commit::CommitPlan;
-use anyhow::Result;
 use crossterm::style::Stylize;
-use indicatif::{ProgressBar, ProgressDrawTarget, ProgressStyle};
 use std::collections::HashMap;
-use std::io::{self, IsTerminal, Write};
-use std::time::Duration;
 
-/// Create a styled spinner for long-running operations.
-pub fn spinner(message: &str) -> ProgressBar {
-    let pb = ProgressBar::new_spinner();
-    pb.set_draw_target(ProgressDrawTarget::stdout());
-    pb.set_style(
-        ProgressStyle::default_spinner()
-            .tick_chars("⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏")
-            .template("  {spinner:.cyan} {msg}")
-            .unwrap(),
-    );
-    pb.set_message(message.to_string());
-    pb.enable_steady_tick(Duration::from_millis(80));
-    pb
-}
+// Re-export generic UI primitives from agentspec-ui.
+pub use agentspec_ui::{
+    confirm, format_tokens, header, info, is_tty, phase_ok, spinner, spinner_done, tool_call, warn,
+};
 
-/// Finish a spinner, replacing it with a green checkmark line.
-pub fn spinner_done(pb: &ProgressBar, detail: Option<&str>) {
-    let msg = pb.message();
-    pb.finish_and_clear();
-    phase_ok(&msg, detail);
-}
-
-/// Print the command header.
-pub fn header(cmd: &str) {
-    println!();
-    println!("  {}", cmd.cyan().bold());
-    println!("  {}", "─".repeat(40).dim());
-    println!();
-}
-
-/// Print a completed phase with green checkmark.
-pub fn phase_ok(msg: &str, detail: Option<&str>) {
-    let suffix = detail
-        .map(|d| format!(" · {}", d.dim()))
-        .unwrap_or_default();
-    println!("  {} {msg}{suffix}", "✓".green().bold());
-}
-
-/// Print a warning message.
-pub fn warn(msg: &str) {
-    println!("  {} {}", "⚠".yellow().bold(), msg.yellow());
-}
-
-/// Print an info message.
-pub fn info(msg: &str) {
-    println!("  {} {}", "ℹ".cyan(), msg.dim());
+/// Display token usage and cost.
+pub fn usage(usage: &AiUsage) {
+    agentspec_ui::usage(usage.input_tokens, usage.output_tokens, usage.cost_usd);
 }
 
 /// Display the commit plan with file statuses and optional cache label.
@@ -228,51 +186,4 @@ pub fn failed_commits(failed: &[(usize, String, String)]) {
         );
     }
     println!();
-}
-
-/// Display a tool call above an active spinner.
-pub fn tool_call(pb: &ProgressBar, cmd: &str) {
-    pb.println(format!("    {} {}", "▸".cyan(), cmd.dim()));
-}
-
-/// Display token usage and cost.
-pub fn usage(usage: &AiUsage) {
-    let cost = usage
-        .cost_usd
-        .map(|c| format!(" · ${c:.4}"))
-        .unwrap_or_default();
-    println!(
-        "  {} {} in / {} out{}",
-        "⊘".dim(),
-        format_tokens(usage.input_tokens).dim(),
-        format_tokens(usage.output_tokens).dim(),
-        cost.dim()
-    );
-}
-
-/// Format a token count for display (e.g. 1234 -> "1.2k").
-pub fn format_tokens(n: u64) -> String {
-    if n >= 1_000_000 {
-        format!("{:.1}M", n as f64 / 1_000_000.0)
-    } else if n >= 1_000 {
-        format!("{:.1}k", n as f64 / 1_000.0)
-    } else {
-        n.to_string()
-    }
-}
-
-/// Ask for yes/no confirmation. Returns false in non-TTY environments.
-pub fn confirm(prompt: &str) -> Result<bool> {
-    if !io::stdin().is_terminal() {
-        return Ok(false);
-    }
-
-    print!("  {} ", prompt.bold());
-    io::stdout().flush()?;
-
-    let mut input = String::new();
-    io::stdin().read_line(&mut input)?;
-    let trimmed = input.trim().to_lowercase();
-
-    Ok(trimmed == "y" || trimmed == "yes")
 }
