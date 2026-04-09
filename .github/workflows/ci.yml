@@ -21,36 +21,66 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
+        with:
+          path: sr
+      - uses: actions/checkout@v6
+        with:
+          repository: urmzd/agentspec
+          path: agentspec
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: sr
       - run: cargo check --workspace
+        working-directory: sr
 
   clippy:
     name: Clippy
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
+        with:
+          path: sr
+      - uses: actions/checkout@v6
+        with:
+          repository: urmzd/agentspec
+          path: agentspec
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy
       - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: sr
       - run: cargo clippy --workspace -- -D warnings
+        working-directory: sr
 
   fmt:
     name: Format
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
+        with:
+          path: sr
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt
       - run: cargo fmt --all -- --check
+        working-directory: sr
 
   test:
     name: Test
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
+        with:
+          path: sr
+      - uses: actions/checkout@v6
+        with:
+          repository: urmzd/agentspec
+          path: agentspec
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: sr
       - run: cargo test --workspace
+        working-directory: sr
