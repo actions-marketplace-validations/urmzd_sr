@@ -9,6 +9,40 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "320119579fcad9c21884f5c4861d16174d0e06250625266f50fe6898340abefa"
 
 [[package]]
+name = "agentspec-provider"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "clap",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror",
+ "tokio",
+]
+
+[[package]]
+name = "agentspec-ui"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "crossterm",
+ "indicatif",
+]
+
+[[package]]
+name = "agentspec-update"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "serde",
+ "serde_json",
+ "sha2",
+ "ureq",
+]
+
+[[package]]
 name = "aho-corasick"
 version = "1.1.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1091,10 +1125,11 @@ dependencies = [
 
 [[package]]
 name = "sr-ai"
-version = "3.3.4"
+version = "3.3.5"
 dependencies = [
+ "agentspec-provider",
+ "agentspec-ui",
  "anyhow",
- "async-trait",
  "clap",
  "crossterm",
  "dirs",
@@ -1112,8 +1147,9 @@ dependencies = [
 
 [[package]]
 name = "sr-cli"
-version = "3.3.4"
+version = "3.3.5"
 dependencies = [
+ "agentspec-update",
  "anyhow",
  "clap",
  "clap_complete",
@@ -1131,7 +1167,7 @@ dependencies = [
 
 [[package]]
 name = "sr-core"
-version = "3.3.4"
+version = "3.3.5"
 dependencies = [
  "anyhow",
  "dirs",
@@ -1150,7 +1186,7 @@ dependencies = [
 
 [[package]]
 name = "sr-git"
-version = "3.3.4"
+version = "3.3.5"
 dependencies = [
  "base64",
  "semver",
@@ -1160,7 +1196,7 @@ dependencies = [
 
 [[package]]
 name = "sr-github"
-version = "3.3.4"
+version = "3.3.5"
 dependencies = [
  "serde",
  "serde_json",

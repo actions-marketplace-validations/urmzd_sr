@@ -13,6 +13,8 @@ categories = ["development-tools"]
 
 [dependencies]
 sr-core = { workspace = true }
+agentspec-provider = { workspace = true }
+agentspec-ui = { workspace = true }
 clap = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
@@ -22,10 +24,9 @@ anyhow = { workspace = true }
 sha2 = { workspace = true }
 crossterm = { workspace = true }
 indicatif = { workspace = true }
-async-trait = { workspace = true }
 dirs = { workspace = true }
 regex = { workspace = true }
-tempfile = { workspace = true }
 minijinja = { workspace = true }
 
 [dev-dependencies]
+tempfile = { workspace = true }

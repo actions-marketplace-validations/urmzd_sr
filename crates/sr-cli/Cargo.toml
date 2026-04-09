@@ -20,6 +20,7 @@ sr-core = { workspace = true }
 sr-git = { workspace = true }
 sr-github = { workspace = true }
 sr-ai = { workspace = true }
+agentspec-update = { workspace = true }
 clap = { workspace = true }
 clap_complete = { workspace = true }
 serde = { workspace = true }

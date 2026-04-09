@@ -17,6 +17,11 @@ sr-git = { path = "crates/sr-git", version = "3.3.5" }
 sr-github = { path = "crates/sr-github", version = "3.3.5" }
 sr-ai = { path = "crates/sr-ai", version = "3.3.5" }
 
+# Agentspec SDK crates (path deps for development; switch to git/crates.io for release)
+agentspec-provider = { path = "../agentspec/crates/agentspec-provider", version = "0.1.0" }
+agentspec-ui = { path = "../agentspec/crates/agentspec-ui", version = "0.1.0" }
+agentspec-update = { path = "../agentspec/crates/agentspec-update", version = "0.1.0" }
+
 # Serialization
 serde = { version = "1", features = ["derive"] }
 serde_yaml_ng = "0.10"
