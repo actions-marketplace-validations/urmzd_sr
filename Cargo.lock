@@ -10,7 +10,9 @@ checksum = "320119579fcad9c21884f5c4861d16174d0e06250625266f50fe6898340abefa"
 
 [[package]]
 name = "agentspec-provider"
-version = "0.1.0"
+version = "0.6.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3b614a5fc20ba3036645e696d53feacb0fa36a68cb737ece3b6c495c4946311e"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -24,7 +26,9 @@ dependencies = [
 
 [[package]]
 name = "agentspec-ui"
-version = "0.1.0"
+version = "0.6.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "708ef57be8fab938df76e6e4148960fdd4c3658cac9a3aaa0358836a178b9e3b"
 dependencies = [
  "anyhow",
  "crossterm",
@@ -33,7 +37,9 @@ dependencies = [
 
 [[package]]
 name = "agentspec-update"
-version = "0.1.0"
+version = "0.6.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "49b41cf13d5f1daaf731e67a34204d20c6c9d362256361a982787cb0a1f83399"
 dependencies = [
  "anyhow",
  "serde",
@@ -918,7 +924,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys 0.4.15",
- "windows-sys 0.52.0",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
