@@ -118,3 +118,9 @@ hooks:
         - "*.rs"
       rules:
         - "cargo test --workspace"
+
+# Release lifecycle hooks (structured alternative to pre/post_release_command).
+# lifecycle:
+#   - name: validate
+#     when: pre_release
+#     run: "cargo test --workspace"
