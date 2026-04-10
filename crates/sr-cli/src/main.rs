@@ -5,7 +5,7 @@ use clap::{CommandFactory, Parser, Subcommand};
 use sr_ai::ai::{Backend, BackendConfig};
 use sr_core::changelog::DefaultChangelogFormatter;
 use sr_core::commit::ConfiguredCommitParser;
-use sr_core::config::{DEFAULT_CONFIG_FILE, LEGACY_CONFIG_FILE, ReleaseConfig};
+use sr_core::config::{DEFAULT_CONFIG_FILE, LEGACY_CONFIG_FILE, ReleaseConfig, VersioningMode};
 use sr_core::error::ReleaseError;
 use sr_core::release::{ReleaseStrategy, TrunkReleaseStrategy};
 use sr_git::NativeGitRepository;
@@ -292,6 +292,18 @@ fn is_no_release_error(err: &anyhow::Error) -> bool {
 fn load_config_for_package(package: Option<&str>) -> anyhow::Result<ReleaseConfig> {
     let config_path = resolve_config_path();
     let mut config = ReleaseConfig::load(&config_path)?;
+
+    // Fixed versioning: reject --package and resolve all packages together
+    if config.versioning == VersioningMode::Fixed && !config.packages.is_empty() {
+        if let Some(name) = package {
+            anyhow::bail!(
+                "--package '{name}' is not supported with `versioning: fixed` — \
+                 all packages are released together"
+            );
+        }
+        return Ok(config.resolve_fixed());
+    }
+
     match package {
         Some(name) => {
             let pkg = config.find_package(name)?;

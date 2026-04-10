@@ -521,12 +521,18 @@ hooks:
 #     when: post_release
 #     run: "./scripts/notify-slack.sh"
 
+# Versioning strategy for monorepo packages.
+# "independent" (default): each package gets its own version and tags.
+# "fixed": all packages share one version, tag, and changelog.
+# versioning: independent
+
 # Monorepo packages (uncomment and configure if needed).
-# Each package is released independently with its own version, tags, and changelog.
+# With versioning: independent — each package is released separately.
+# With versioning: fixed — all packages are released together under one version.
 # packages:
 #   - name: core
 #     path: crates/core
-#     tag_prefix: "core/v"          # default: "<name>/v"
+#     tag_prefix: "core/v"          # default: "<name>/v" (independent only)
 #     version_files:
 #       - crates/core/Cargo.toml
 #     changelog:
@@ -890,6 +896,7 @@ packages:
             "release_name_template",
             "hooks",
             "lifecycle",
+            "versioning",
             "packages",
         ] {
             assert!(template.contains(field), "template missing field: {field}");
@@ -973,5 +980,125 @@ lifecycle:
         let config = ReleaseConfig::default();
         let yaml = serde_yaml_ng::to_string(&config).unwrap();
         assert!(!yaml.contains("lifecycle"));
+    }
+
+    #[test]
+    fn versioning_mode_defaults_to_independent() {
+        let config = ReleaseConfig::default();
+        assert_eq!(config.versioning, VersioningMode::Independent);
+    }
+
+    #[test]
+    fn versioning_mode_roundtrip() {
+        for (mode, label) in [
+            (VersioningMode::Independent, "independent"),
+            (VersioningMode::Fixed, "fixed"),
+        ] {
+            let yaml = serde_yaml_ng::to_string(&mode).unwrap();
+            assert!(yaml.contains(label));
+            let parsed: VersioningMode = serde_yaml_ng::from_str(&yaml).unwrap();
+            assert_eq!(parsed, mode);
+        }
+    }
+
+    #[test]
+    fn load_yaml_with_versioning_fixed() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.yml");
+        std::fs::write(
+            &path,
+            r#"
+versioning: fixed
+packages:
+  - name: core
+    path: crates/core
+    version_files:
+      - crates/core/Cargo.toml
+  - name: cli
+    path: crates/cli
+    version_files:
+      - crates/cli/Cargo.toml
+"#,
+        )
+        .unwrap();
+
+        let config = ReleaseConfig::load(&path).unwrap();
+        assert_eq!(config.versioning, VersioningMode::Fixed);
+        assert_eq!(config.packages.len(), 2);
+    }
+
+    #[test]
+    fn resolve_fixed_collects_all_version_files() {
+        let config = ReleaseConfig {
+            version_files: vec!["Cargo.toml".into()],
+            packages: vec![
+                PackageConfig {
+                    name: "core".into(),
+                    path: "crates/core".into(),
+                    tag_prefix: Some("core/v".into()),
+                    version_files: vec!["crates/core/Cargo.toml".into()],
+                    changelog: None,
+                    build_command: None,
+                    stage_files: vec!["crates/core/Cargo.lock".into()],
+                },
+                PackageConfig {
+                    name: "cli".into(),
+                    path: "crates/cli".into(),
+                    tag_prefix: None,
+                    version_files: vec!["crates/cli/Cargo.toml".into()],
+                    changelog: None,
+                    build_command: None,
+                    stage_files: vec![],
+                },
+            ],
+            versioning: VersioningMode::Fixed,
+            ..Default::default()
+        };
+
+        let resolved = config.resolve_fixed();
+        // Uses root tag_prefix, not per-package
+        assert_eq!(resolved.tag_prefix, "v");
+        // No path filter
+        assert!(resolved.path_filter.is_none());
+        // Collects version files from root + all packages
+        assert!(resolved.version_files.contains(&"Cargo.toml".to_string()));
+        assert!(resolved
+            .version_files
+            .contains(&"crates/core/Cargo.toml".to_string()));
+        assert!(resolved
+            .version_files
+            .contains(&"crates/cli/Cargo.toml".to_string()));
+        // Collects stage files
+        assert!(resolved
+            .stage_files
+            .contains(&"crates/core/Cargo.lock".to_string()));
+        // Packages cleared
+        assert!(resolved.packages.is_empty());
+    }
+
+    #[test]
+    fn resolve_fixed_deduplicates() {
+        let config = ReleaseConfig {
+            version_files: vec!["Cargo.toml".into()],
+            packages: vec![PackageConfig {
+                name: "core".into(),
+                path: "crates/core".into(),
+                tag_prefix: None,
+                version_files: vec!["Cargo.toml".into()], // duplicate of root
+                changelog: None,
+                build_command: None,
+                stage_files: vec![],
+            }],
+            versioning: VersioningMode::Fixed,
+            ..Default::default()
+        };
+
+        let resolved = config.resolve_fixed();
+        let cargo_count = resolved
+            .version_files
+            .iter()
+            .filter(|f| *f == "Cargo.toml")
+            .count();
+        assert_eq!(cargo_count, 1);
     }
 }
