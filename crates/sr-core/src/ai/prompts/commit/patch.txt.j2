@@ -1,0 +1,24 @@
+{% if staged_only -%}
+Analyze the staged git changes and group them into atomic commits.
+Use `git diff --cached` and `git diff --cached --stat` to inspect what's staged.
+{%- else -%}
+Analyze all git changes (staged, unstaged, and untracked) and group them into atomic commits.
+Use `git diff HEAD`, `git diff --cached`, `git diff`, `git status --porcelain`, and `git ls-files --others --exclude-standard` to inspect changes.
+{%- endif %}
+The git repository root is: {{ git_root }}
+{% if message %}
+Additional context from the user:
+{{ message }}
+{% endif %}
+--- PATCH MODE ---
+An existing commit plan covers most of the changes. Your job is to integrate the NEW files into this plan. Keep existing commit groupings intact — only add the new files to existing commits or create new commits for them.
+
+Existing plan:
+```json
+{{ plan_json }}
+```
+
+New files to place: {{ unplaced_files }}
+
+File delta:
+{{ delta_summary }}
