@@ -17,51 +17,127 @@ pub const LEGACY_CONFIG_FILE: &str = ".urmzd.sr.yml";
 /// Config file candidates, checked in priority order.
 pub const CONFIG_CANDIDATES: &[&str] = &["sr.yaml", "sr.yml", LEGACY_CONFIG_FILE];
 
+// ---------------------------------------------------------------------------
+// Top-level config
+// ---------------------------------------------------------------------------
+
+/// Root configuration. Three top-level concerns:
+/// - `commit` — how commits are parsed
+/// - `release` — how releases are cut
+/// - `hooks` — what runs at each lifecycle event
+///
+/// ```yaml
+/// commit:
+///   types: [...]
+///   pattern: '...'
+///
+/// release:
+///   branches: [main]
+///   tag_prefix: "v"
+///   version_files: [Cargo.toml]
+///   channels:
+///     canary: { prerelease: canary }
+///     stable: {}
+///
+/// hooks:
+///   pre_commit: ["cargo fmt --check"]
+///   pre_release: ["cargo test --workspace"]
+/// ```
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Config {
+    pub commit: CommitConfig,
+    pub release: ReleaseConfig,
+    pub hooks: HooksConfig,
+    /// Monorepo packages.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub packages: Vec<PackageConfig>,
+}
+
+impl Default for Config {
+    fn default() -> Self {
+        Self {
+            commit: CommitConfig::default(),
+            release: ReleaseConfig::default(),
+            hooks: HooksConfig::default(),
+            packages: vec![],
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Commit config
+// ---------------------------------------------------------------------------
+
+/// How commits are parsed and classified.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct CommitConfig {
+    /// Regex for parsing conventional commits.
+    pub pattern: String,
+    /// Changelog section heading for breaking changes.
+    pub breaking_section: String,
+    /// Fallback changelog section for unrecognised commit types.
+    pub misc_section: String,
+    /// Commit type definitions.
+    pub types: Vec<CommitType>,
+}
+
+impl Default for CommitConfig {
+    fn default() -> Self {
+        Self {
+            pattern: DEFAULT_COMMIT_PATTERN.into(),
+            breaking_section: "Breaking Changes".into(),
+            misc_section: "Miscellaneous".into(),
+            types: default_commit_types(),
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Release config
+// ---------------------------------------------------------------------------
+
+/// How releases are cut — versioning, changelog, tags, artifacts.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct ReleaseConfig {
+    /// Branches that trigger releases.
     pub branches: Vec<String>,
+    /// Prefix for git tags (e.g. "v" → "v1.2.0").
     pub tag_prefix: String,
-    pub commit_pattern: String,
-    pub breaking_section: String,
-    pub misc_section: String,
-    pub types: Vec<CommitType>,
+    /// Changelog configuration.
     pub changelog: ChangelogConfig,
+    /// Manifest files to bump (auto-detected if empty).
     pub version_files: Vec<String>,
+    /// Fail on unsupported version file formats.
     pub version_files_strict: bool,
+    /// Glob patterns for release artifacts.
     pub artifacts: Vec<String>,
+    /// Create floating major version tags (e.g. "v3" → latest v3.x.x).
     pub floating_tags: bool,
-    /// Additional files/globs to stage in the release commit (e.g. `Cargo.lock`).
+    /// Additional files to stage in the release commit.
     pub stage_files: Vec<String>,
-    /// Pre-release identifier (e.g. "alpha", "beta", "rc"). When set, versions are
-    /// formatted as X.Y.Z-<id>.N where N auto-increments.
+    /// Pre-release identifier (e.g. "alpha", "rc").
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub prerelease: Option<String>,
-    /// Sign annotated tags with GPG/SSH (git tag -s).
+    /// Sign tags with GPG/SSH.
     pub sign_tags: bool,
-    /// Create GitHub releases as drafts (requires manual publishing).
+    /// Create GitHub releases as drafts.
     pub draft: bool,
-    /// Minijinja template for the GitHub release name.
-    /// Available variables: `version`, `tag_name`, `tag_prefix`.
-    /// Default when None: uses the tag name (e.g. "v1.2.0").
+    /// Minijinja template for release name.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub release_name_template: Option<String>,
-    /// Hooks configuration — pre/post hooks for every sr command.
-    pub hooks: HooksConfig,
     /// Versioning strategy for monorepo packages.
-    /// `independent` (default): each package is versioned separately.
-    /// `fixed`: all packages share one version, tag, and changelog.
     #[serde(default)]
     pub versioning: VersioningMode,
-    /// Monorepo packages. When non-empty, each package is released independently
-    /// (or together when `versioning: fixed`).
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub packages: Vec<PackageConfig>,
-    /// Named release channels for trunk-based promotion (e.g. canary, rc, stable).
+    /// Named release channels for trunk-based promotion.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub channels: BTreeMap<String, ChannelConfig>,
-    /// Default channel for `sr release` when no --channel flag given.
+    /// Default channel when no --channel flag given.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub default_channel: Option<String>,
-    /// Internal: set when resolving a package config. Commits are filtered to this path.
+    /// Internal: commits filtered to this path (set by resolve_package).
     #[serde(skip)]
     pub path_filter: Option<String>,
 }
@@ -71,10 +147,6 @@ impl Default for ReleaseConfig {
         Self {
             branches: vec!["main".into()],
             tag_prefix: "v".into(),
-            commit_pattern: DEFAULT_COMMIT_PATTERN.into(),
-            breaking_section: "Breaking Changes".into(),
-            misc_section: "Miscellaneous".into(),
-            types: default_commit_types(),
             changelog: ChangelogConfig::default(),
             version_files: vec![],
             version_files_strict: false,
@@ -85,9 +157,7 @@ impl Default for ReleaseConfig {
             sign_tags: false,
             draft: false,
             release_name_template: None,
-            hooks: HooksConfig::default(),
             versioning: VersioningMode::default(),
-            packages: vec![],
             channels: BTreeMap::new(),
             default_channel: None,
             path_filter: None,
@@ -95,83 +165,43 @@ impl Default for ReleaseConfig {
     }
 }
 
-/// Versioning strategy for monorepo packages.
+// ---------------------------------------------------------------------------
+// Supporting types
+// ---------------------------------------------------------------------------
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum VersioningMode {
-    /// Each package is versioned and released independently (default).
     #[default]
     Independent,
-    /// All packages share a single version, tag, and changelog.
     Fixed,
 }
 
-/// A package in a monorepo. Each package is released independently with its own
-/// version, tags, and changelog. Commits are filtered by `path`.
-///
-/// ```yaml
-/// packages:
-///   - name: core
-///     path: crates/core
-///     version_files:
-///       - crates/core/Cargo.toml
-///   - name: cli
-///     path: crates/cli
-///     version_files:
-///       - crates/cli/Cargo.toml
-/// ```
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PackageConfig {
-    /// Package name — used in the default tag prefix (`{name}/v`).
     pub name: String,
-    /// Directory path relative to the repo root. Only commits touching this path trigger a release.
     pub path: String,
-    /// Tag prefix override (default: `{name}/v`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tag_prefix: Option<String>,
-    /// Version files override.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub version_files: Vec<String>,
-    /// Changelog override.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub changelog: Option<ChangelogConfig>,
-    /// Stage files override.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub stage_files: Vec<String>,
 }
 
-/// A named release channel for trunk-based promotion.
-///
-/// All channels release from the same trunk branch. Promotion flows from
-/// less stable to more stable: canary -> rc -> stable.
-///
-/// ```yaml
-/// channels:
-///   canary:
-///     prerelease: canary
-///   rc:
-///     prerelease: rc
-///     draft: true
-///   stable: {}
-/// ```
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(default)]
 pub struct ChannelConfig {
-    /// Pre-release identifier (e.g. "rc", "beta"). None = stable release.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub prerelease: Option<String>,
-    /// Create GitHub releases as drafts.
     #[serde(default)]
     pub draft: bool,
-    /// Artifact patterns for this channel.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub artifacts: Vec<String>,
 }
 
-/// An event in the sr lifecycle where hooks can run.
-///
-/// Every sr command has a pre/post pair. Hooks are configured under
-/// the event name in the `hooks` section of `sr.yaml`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum HookEvent {
@@ -187,26 +217,6 @@ pub enum HookEvent {
     PostRelease,
 }
 
-/// Hooks configuration.
-///
-/// Each key is a sr lifecycle event (e.g. `pre_commit`, `pre_release`)
-/// and the value is a list of shell commands to run.
-///
-/// ```yaml
-/// hooks:
-///   pre_release:
-///     - "cargo test --workspace"
-///   pre_commit:
-///     - "cargo fmt --check"
-///     - "cargo clippy -- -D warnings"
-///   post_release:
-///     - "./scripts/notify-slack.sh"
-/// ```
-
-/// Hooks configuration.
-///
-/// Each key is a sr lifecycle event (e.g. `pre_commit`, `pre_release`)
-/// and the value is a list of shell commands to run.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(transparent)]
 pub struct HooksConfig {
@@ -229,9 +239,12 @@ impl Default for ChangelogConfig {
     }
 }
 
-impl ReleaseConfig {
+// ---------------------------------------------------------------------------
+// Config methods
+// ---------------------------------------------------------------------------
+
+impl Config {
     /// Find the first config file that exists in the given directory.
-    /// Returns `(path, is_legacy)`.
     pub fn find_config(dir: &Path) -> Option<(std::path::PathBuf, bool)> {
         for &candidate in CONFIG_CANDIDATES {
             let path = dir.join(candidate);
@@ -248,56 +261,46 @@ impl ReleaseConfig {
         if !path.exists() {
             return Ok(Self::default());
         }
-
         let contents =
             std::fs::read_to_string(path).map_err(|e| ReleaseError::Config(e.to_string()))?;
-
         serde_yaml_ng::from_str(&contents).map_err(|e| ReleaseError::Config(e.to_string()))
     }
 
-    /// Resolve a package into a full release config by merging package overrides with root config.
+    /// Resolve a package into a full config by merging package overrides.
     pub fn resolve_package(&self, pkg: &PackageConfig) -> Self {
         let mut config = self.clone();
-        config.tag_prefix = pkg
+        config.release.tag_prefix = pkg
             .tag_prefix
             .clone()
             .unwrap_or_else(|| format!("{}/v", pkg.name));
-        config.path_filter = Some(pkg.path.clone());
+        config.release.path_filter = Some(pkg.path.clone());
         if !pkg.version_files.is_empty() {
-            config.version_files = pkg.version_files.clone();
-        } else if config.version_files.is_empty() {
-            // Auto-detect version files in the package directory
+            config.release.version_files = pkg.version_files.clone();
+        } else if config.release.version_files.is_empty() {
             let detected = detect_version_files(Path::new(&pkg.path));
             if !detected.is_empty() {
-                config.version_files = detected
+                config.release.version_files = detected
                     .into_iter()
                     .map(|f| format!("{}/{f}", pkg.path))
                     .collect();
             }
         }
         if let Some(ref cl) = pkg.changelog {
-            config.changelog = cl.clone();
+            config.release.changelog = cl.clone();
         }
         if !pkg.stage_files.is_empty() {
-            config.stage_files = pkg.stage_files.clone();
+            config.release.stage_files = pkg.stage_files.clone();
         }
-        // Clear packages to avoid recursion
         config.packages = vec![];
         config
     }
 
-    /// Resolve all packages into a single config for fixed versioning mode.
-    ///
-    /// Collects version files, stage files, and build commands from all packages.
-    /// Uses the root `tag_prefix` (no per-package prefixes). No path filter is set
-    /// so commits from the entire repo determine the version bump.
+    /// Resolve all packages for fixed versioning mode.
     pub fn resolve_fixed(&self) -> Self {
         let mut config = self.clone();
-        // No path filter — all commits count
-        config.path_filter = None;
+        config.release.path_filter = None;
 
-        // Collect version files from all packages
-        let mut version_files: Vec<String> = config.version_files.clone();
+        let mut version_files: Vec<String> = config.release.version_files.clone();
         for pkg in &self.packages {
             if !pkg.version_files.is_empty() {
                 version_files.extend(pkg.version_files.clone());
@@ -308,30 +311,28 @@ impl ReleaseConfig {
         }
         version_files.sort();
         version_files.dedup();
-        config.version_files = version_files;
+        config.release.version_files = version_files;
 
-        // Collect stage files from all packages
-        let mut stage_files = config.stage_files.clone();
+        let mut stage_files = config.release.stage_files.clone();
         for pkg in &self.packages {
             stage_files.extend(pkg.stage_files.clone());
         }
         stage_files.sort();
         stage_files.dedup();
-        config.stage_files = stage_files;
+        config.release.stage_files = stage_files;
 
-        // Clear packages to avoid recursion
         config.packages = vec![];
         config
     }
 
-    /// Resolve a named channel by merging its overrides onto the root config.
+    /// Resolve a named release channel.
     pub fn resolve_channel(&self, name: &str) -> Result<Self, ReleaseError> {
-        let channel = self.channels.get(name).ok_or_else(|| {
-            let available: Vec<&str> = self.channels.keys().map(|k| k.as_str()).collect();
+        let channel = self.release.channels.get(name).ok_or_else(|| {
+            let available: Vec<&str> = self.release.channels.keys().map(|k| k.as_str()).collect();
             ReleaseError::Config(format!(
                 "channel '{name}' not found. Available: {}",
                 if available.is_empty() {
-                    "(none — no channels configured)".to_string()
+                    "(none)".to_string()
                 } else {
                     available.join(", ")
                 }
@@ -340,18 +341,18 @@ impl ReleaseConfig {
 
         let mut config = self.clone();
         if channel.prerelease.is_some() {
-            config.prerelease = channel.prerelease.clone();
+            config.release.prerelease = channel.prerelease.clone();
         }
         if channel.draft {
-            config.draft = true;
+            config.release.draft = true;
         }
         if !channel.artifacts.is_empty() {
-            config.artifacts.extend(channel.artifacts.clone());
+            config.release.artifacts.extend(channel.artifacts.clone());
         }
         Ok(config)
     }
 
-    /// Find a package by name. Returns an error if the package is not found.
+    /// Find a package by name.
     pub fn find_package(&self, name: &str) -> Result<&PackageConfig, ReleaseError> {
         self.packages
             .iter()
@@ -361,7 +362,7 @@ impl ReleaseConfig {
                 ReleaseError::Config(format!(
                     "package '{name}' not found. Available: {}",
                     if available.is_empty() {
-                        "(none — no packages configured)".to_string()
+                        "(none)".to_string()
                     } else {
                         available.join(", ")
                     }
@@ -370,17 +371,17 @@ impl ReleaseConfig {
     }
 }
 
-/// Generate a fully-commented default `sr.yaml` template.
-///
-/// The returned string is valid YAML with inline comments documenting every field.
-/// `version_files` is injected dynamically (typically from auto-detection).
+// ---------------------------------------------------------------------------
+// Template generation
+// ---------------------------------------------------------------------------
+
 pub fn default_config_template(version_files: &[String]) -> String {
     let vf = if version_files.is_empty() {
-        "version_files: []\n".to_string()
+        "  version_files: []\n".to_string()
     } else {
-        let mut s = "version_files:\n".to_string();
+        let mut s = "  version_files:\n".to_string();
         for f in version_files {
-            s.push_str(&format!("  - {f}\n"));
+            s.push_str(&format!("    - {f}\n"));
         }
         s
     };
@@ -389,95 +390,70 @@ pub fn default_config_template(version_files: &[String]) -> String {
         r#"# sr configuration
 # Full reference: https://github.com/urmzd/sr#configuration
 
-# Branches that trigger releases when commits are pushed.
-branches:
-  - main
+# How commits are parsed and classified.
+commit:
+  # Regex for parsing conventional commits.
+  # Required named groups: type, description. Optional: scope, breaking.
+  pattern: '^(?P<type>\w+)(?:\((?P<scope>[^)]+)\))?(?P<breaking>!)?:\s+(?P<description>.+)'
 
-# Prefix prepended to version tags (e.g. "v1.2.0").
-tag_prefix: "v"
+  # Changelog section headings.
+  breaking_section: Breaking Changes
+  misc_section: Miscellaneous
 
-# Regex for parsing conventional commits.
-# Required named groups: type, description.
-# Optional named groups: scope, breaking.
-commit_pattern: '^(?P<type>\w+)(?:\((?P<scope>[^)]+)\))?(?P<breaking>!)?:\s+(?P<description>.+)'
+  # Commit type definitions.
+  types:
+    - name: feat
+      bump: minor
+      section: Features
+    - name: fix
+      bump: patch
+      section: Bug Fixes
+    - name: perf
+      bump: patch
+      section: Performance
+    - name: docs
+      section: Documentation
+    - name: refactor
+      bump: patch
+      section: Refactoring
+    - name: revert
+      section: Reverts
+    - name: chore
+    - name: ci
+    - name: test
+    - name: build
+    - name: style
 
-# Changelog section heading for breaking changes.
-breaking_section: Breaking Changes
+# How releases are cut.
+release:
+  branches:
+    - main
+  tag_prefix: "v"
+  changelog:
+    file: CHANGELOG.md
+{vf}  version_files_strict: false
+  artifacts: []
+  floating_tags: true
+  stage_files: []
+  sign_tags: false
+  draft: false
+  # prerelease: alpha
+  # release_name_template: "{{{{ tag_name }}}}"
 
-# Fallback changelog section for unrecognised commit types.
-misc_section: Miscellaneous
+  # Release channels for trunk-based promotion.
+  # channels:
+  #   canary:
+  #     prerelease: canary
+  #   rc:
+  #     prerelease: rc
+  #     draft: true
+  #   stable: {{}}
+  # default_channel: stable
 
-# Commit type definitions.
-# name:    commit type prefix (e.g. "feat", "fix")
-# bump:    version bump level — major, minor, patch, or omit for no bump
-# section: changelog section heading, or omit to exclude from changelog
-# pattern: optional regex to match non-conventional commits as this type (fallback)
-types:
-  - name: feat
-    bump: minor
-    section: Features
-  - name: fix
-    bump: patch
-    section: Bug Fixes
-  - name: perf
-    bump: patch
-    section: Performance
-  - name: docs
-    section: Documentation
-  - name: refactor
-    bump: patch
-    section: Refactoring
-  - name: revert
-    section: Reverts
-  - name: chore
-  - name: ci
-  - name: test
-  - name: build
-  - name: style
-
-# Changelog configuration.
-# file:     path to the changelog file (e.g. CHANGELOG.md), or omit to skip writing
-# template: custom Minijinja template string for changelog rendering
-changelog:
-  file: CHANGELOG.md
-  template:
-
-# Manifest files to bump on release (e.g. Cargo.toml, package.json, pyproject.toml).
-# Auto-detected if empty.
-{vf}
-# Fail if a version file uses an unsupported format (default: skip unknown files).
-version_files_strict: false
-
-# Glob patterns for release assets to upload to GitHub (e.g. "dist/*.tar.gz").
-artifacts: []
-
-# Create floating major version tags (e.g. "v3" pointing to latest v3.x.x).
-floating_tags: true
-
-# Additional files/globs to stage in the release commit (e.g. Cargo.lock).
-stage_files: []
-
-# Pre-release identifier (e.g. "alpha", "beta", "rc").
-# When set, versions are formatted as X.Y.Z-<id>.N where N auto-increments.
-prerelease:
-
-# Sign annotated tags with GPG/SSH (git tag -s).
-sign_tags: false
-
-# Create GitHub releases as drafts (requires manual publishing).
-draft: false
-
-# Minijinja template for the GitHub release name.
-# Available variables: version, tag_name, tag_prefix.
-# Default: uses the tag name (e.g. "v1.2.0").
-release_name_template:
-
-# Hooks — pre/post hooks for every sr command.
-# Each key is a lifecycle event, values are shell commands.
-# Hook context is passed as JSON via stdin (event, command-specific fields).
+# Lifecycle hooks — shell commands keyed by event.
 # Available events: pre_commit, post_commit, pre_branch, post_branch,
 #   pre_pr, post_pr, pre_review, post_review, pre_release, post_release.
-# Release hooks also receive SR_VERSION and SR_TAG env vars.
+# Release hooks receive SR_VERSION and SR_TAG env vars.
 # hooks:
 #   pre_commit:
 #     - "cargo fmt --check"
@@ -487,22 +463,13 @@ release_name_template:
 #   post_release:
 #     - "./scripts/notify-slack.sh"
 
-# Versioning strategy for monorepo packages.
-# "independent" (default): each package gets its own version and tags.
-# "fixed": all packages share one version, tag, and changelog.
-# versioning: independent
-
 # Monorepo packages (uncomment and configure if needed).
-# With versioning: independent — each package is released separately.
-# With versioning: fixed — all packages are released together under one version.
 # packages:
 #   - name: core
 #     path: crates/core
-#     tag_prefix: "core/v"          # default: "<name>/v" (independent only)
+#     tag_prefix: "core/v"
 #     version_files:
 #       - crates/core/Cargo.toml
-#     changelog:
-#       file: crates/core/CHANGELOG.md
 #     stage_files:
 #       - crates/core/Cargo.lock
 "#
@@ -510,15 +477,11 @@ release_name_template:
 }
 
 /// Merge new default fields into an existing config YAML string.
-///
-/// Adds any top-level or nested mapping keys present in the defaults but missing
-/// from the existing config. Arrays are never merged (user's array = user's intent).
-/// Returns the merged YAML with a header comment.
 pub fn merge_config_yaml(existing_yaml: &str) -> Result<String, ReleaseError> {
     let mut existing: serde_yaml_ng::Value = serde_yaml_ng::from_str(existing_yaml)
         .map_err(|e| ReleaseError::Config(format!("failed to parse existing config: {e}")))?;
 
-    let default_config = ReleaseConfig::default();
+    let default_config = Config::default();
     let default_yaml = serde_yaml_ng::to_string(&default_config)
         .map_err(|e| ReleaseError::Config(e.to_string()))?;
     let defaults: serde_yaml_ng::Value =
@@ -536,15 +499,12 @@ pub fn merge_config_yaml(existing_yaml: &str) -> Result<String, ReleaseError> {
     ))
 }
 
-/// Recursively insert missing keys from `defaults` into `base`.
-/// Only mapping keys are merged; arrays and scalars are left untouched.
 fn deep_merge_value(base: &mut serde_yaml_ng::Value, defaults: &serde_yaml_ng::Value) {
     use serde_yaml_ng::Value;
     if let (Value::Mapping(base_map), Value::Mapping(default_map)) = (base, defaults) {
         for (key, default_val) in default_map {
             match base_map.get_mut(key) {
                 Some(existing_val) => {
-                    // Recurse into nested mappings only
                     if matches!(default_val, Value::Mapping(_)) {
                         deep_merge_value(existing_val, default_val);
                     }
@@ -557,7 +517,10 @@ fn deep_merge_value(base: &mut serde_yaml_ng::Value, defaults: &serde_yaml_ng::V
     }
 }
 
-// Custom deserialization for BumpLevel so it can appear in YAML config.
+// ---------------------------------------------------------------------------
+// Serde for BumpLevel
+// ---------------------------------------------------------------------------
+
 impl<'de> Deserialize<'de> for BumpLevel {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
@@ -587,6 +550,10 @@ impl Serialize for BumpLevel {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -594,19 +561,18 @@ mod tests {
 
     #[test]
     fn default_values() {
-        let config = ReleaseConfig::default();
-        assert_eq!(config.branches, vec!["main"]);
-        assert_eq!(config.tag_prefix, "v");
-        assert_eq!(config.commit_pattern, DEFAULT_COMMIT_PATTERN);
-        assert_eq!(config.breaking_section, "Breaking Changes");
-        assert_eq!(config.misc_section, "Miscellaneous");
-        assert!(!config.types.is_empty());
-        assert!(!config.version_files_strict);
-        assert!(config.artifacts.is_empty());
-        assert!(config.floating_tags);
-        assert_eq!(config.changelog.file.as_deref(), Some("CHANGELOG.md"));
-        // Verify refactor has bump: patch (must match README)
-        let refactor = config.types.iter().find(|t| t.name == "refactor").unwrap();
+        let config = Config::default();
+        assert_eq!(config.release.branches, vec!["main"]);
+        assert_eq!(config.release.tag_prefix, "v");
+        assert_eq!(config.commit.pattern, DEFAULT_COMMIT_PATTERN);
+        assert_eq!(config.commit.breaking_section, "Breaking Changes");
+        assert_eq!(config.commit.misc_section, "Miscellaneous");
+        assert!(!config.commit.types.is_empty());
+        assert!(!config.release.version_files_strict);
+        assert!(config.release.artifacts.is_empty());
+        assert!(config.release.floating_tags);
+        assert_eq!(config.release.changelog.file.as_deref(), Some("CHANGELOG.md"));
+        let refactor = config.commit.types.iter().find(|t| t.name == "refactor").unwrap();
         assert_eq!(refactor.bump, Some(BumpLevel::Patch));
     }
 
@@ -614,63 +580,149 @@ mod tests {
     fn load_missing_file() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("nonexistent.yml");
-        let config = ReleaseConfig::load(&path).unwrap();
-        assert_eq!(config.tag_prefix, "v");
+        let config = Config::load(&path).unwrap();
+        assert_eq!(config.release.tag_prefix, "v");
     }
 
     #[test]
-    fn load_valid_yaml() {
+    fn load_nested_yaml() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("config.yml");
         let mut f = std::fs::File::create(&path).unwrap();
-        writeln!(f, "branches:\n  - develop\ntag_prefix: release-").unwrap();
+        writeln!(
+            f,
+            "commit:\n  pattern: custom\nrelease:\n  branches:\n    - develop\n  tag_prefix: release-"
+        )
+        .unwrap();
 
-        let config = ReleaseConfig::load(&path).unwrap();
-        assert_eq!(config.branches, vec!["develop"]);
-        assert_eq!(config.tag_prefix, "release-");
+        let config = Config::load(&path).unwrap();
+        assert_eq!(config.release.branches, vec!["develop"]);
+        assert_eq!(config.release.tag_prefix, "release-");
+        assert_eq!(config.commit.pattern, "custom");
     }
 
     #[test]
     fn load_partial_yaml() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("config.yml");
-        std::fs::write(&path, "tag_prefix: rel-\n").unwrap();
+        std::fs::write(&path, "release:\n  tag_prefix: rel-\n").unwrap();
 
-        let config = ReleaseConfig::load(&path).unwrap();
-        assert_eq!(config.tag_prefix, "rel-");
-        assert_eq!(config.branches, vec!["main"]);
-        // defaults should still apply for types/pattern/breaking_section
-        assert_eq!(config.commit_pattern, DEFAULT_COMMIT_PATTERN);
-        assert_eq!(config.breaking_section, "Breaking Changes");
-        assert!(!config.types.is_empty());
+        let config = Config::load(&path).unwrap();
+        assert_eq!(config.release.tag_prefix, "rel-");
+        assert_eq!(config.release.branches, vec!["main"]);
+        assert_eq!(config.commit.pattern, DEFAULT_COMMIT_PATTERN);
     }
 
     #[test]
-    fn load_yaml_with_artifacts() {
+    fn load_yaml_with_packages() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("config.yml");
         std::fs::write(
             &path,
-            "artifacts:\n  - \"dist/*.tar.gz\"\n  - \"build/output-*\"\n",
+            "packages:\n  - name: core\n    path: crates/core\n    version_files:\n      - crates/core/Cargo.toml\n",
         )
         .unwrap();
 
-        let config = ReleaseConfig::load(&path).unwrap();
-        assert_eq!(config.artifacts, vec!["dist/*.tar.gz", "build/output-*"]);
-        // defaults still apply
-        assert_eq!(config.tag_prefix, "v");
+        let config = Config::load(&path).unwrap();
+        assert_eq!(config.packages.len(), 1);
+        assert_eq!(config.packages[0].name, "core");
     }
 
     #[test]
-    fn load_yaml_with_floating_tags() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("config.yml");
-        std::fs::write(&path, "floating_tags: true\n").unwrap();
+    fn resolve_package_defaults() {
+        let config = Config {
+            packages: vec![PackageConfig {
+                name: "core".into(),
+                path: "crates/core".into(),
+                tag_prefix: None,
+                version_files: vec![],
+                changelog: None,
+                stage_files: vec![],
+            }],
+            ..Default::default()
+        };
 
-        let config = ReleaseConfig::load(&path).unwrap();
-        assert!(config.floating_tags);
-        // defaults still apply
-        assert_eq!(config.tag_prefix, "v");
+        let resolved = config.resolve_package(&config.packages[0]);
+        assert_eq!(resolved.release.tag_prefix, "core/v");
+        assert_eq!(resolved.release.path_filter.as_deref(), Some("crates/core"));
+        assert!(resolved.packages.is_empty());
+    }
+
+    #[test]
+    fn resolve_package_overrides() {
+        let mut config = Config::default();
+        config.release.version_files = vec!["Cargo.toml".into()];
+        config.packages = vec![PackageConfig {
+            name: "cli".into(),
+            path: "crates/cli".into(),
+            tag_prefix: Some("cli-v".into()),
+            version_files: vec!["crates/cli/Cargo.toml".into()],
+            changelog: Some(ChangelogConfig {
+                file: Some("crates/cli/CHANGELOG.md".into()),
+                template: None,
+            }),
+            stage_files: vec!["crates/cli/Cargo.lock".into()],
+        }];
+
+        let resolved = config.resolve_package(&config.packages[0]);
+        assert_eq!(resolved.release.tag_prefix, "cli-v");
+        assert_eq!(resolved.release.version_files, vec!["crates/cli/Cargo.toml"]);
+        assert_eq!(resolved.release.stage_files, vec!["crates/cli/Cargo.lock"]);
+    }
+
+    #[test]
+    fn find_package_not_found() {
+        let config = Config::default();
+        let err = config.find_package("nonexistent").unwrap_err();
+        assert!(err.to_string().contains("nonexistent"));
+    }
+
+    #[test]
+    fn resolve_channel() {
+        let mut config = Config::default();
+        config.release.channels.insert(
+            "canary".into(),
+            ChannelConfig {
+                prerelease: Some("canary".into()),
+                ..Default::default()
+            },
+        );
+
+        let resolved = config.resolve_channel("canary").unwrap();
+        assert_eq!(resolved.release.prerelease.as_deref(), Some("canary"));
+    }
+
+    #[test]
+    fn resolve_channel_not_found() {
+        let config = Config::default();
+        assert!(config.resolve_channel("missing").is_err());
+    }
+
+    #[test]
+    fn hook_event_roundtrip() {
+        let mut hooks = BTreeMap::new();
+        hooks.insert(HookEvent::PreRelease, vec!["cargo test".to_string()]);
+        let config = HooksConfig { hooks };
+        let yaml = serde_yaml_ng::to_string(&config).unwrap();
+        assert!(yaml.contains("pre_release"));
+        let parsed: HooksConfig = serde_yaml_ng::from_str(&yaml).unwrap();
+        assert!(parsed.hooks.contains_key(&HookEvent::PreRelease));
+    }
+
+    #[test]
+    fn default_template_parses() {
+        let template = default_config_template(&[]);
+        let config: Config = serde_yaml_ng::from_str(&template).unwrap();
+        assert_eq!(config.release.branches, vec!["main"]);
+        assert_eq!(config.release.tag_prefix, "v");
+        assert!(config.release.floating_tags);
+    }
+
+    #[test]
+    fn default_template_with_version_files() {
+        let template = default_config_template(&["Cargo.toml".into(), "package.json".into()]);
+        let config: Config = serde_yaml_ng::from_str(&template).unwrap();
+        assert_eq!(config.release.version_files, vec!["Cargo.toml", "package.json"]);
     }
 
     #[test]
@@ -688,231 +740,6 @@ mod tests {
     }
 
     #[test]
-    fn types_roundtrip() {
-        let config = ReleaseConfig::default();
-        let yaml = serde_yaml_ng::to_string(&config).unwrap();
-        let parsed: ReleaseConfig = serde_yaml_ng::from_str(&yaml).unwrap();
-        assert_eq!(parsed.types.len(), config.types.len());
-        assert_eq!(parsed.types[0].name, "feat");
-        assert_eq!(parsed.commit_pattern, config.commit_pattern);
-        assert_eq!(parsed.breaking_section, config.breaking_section);
-    }
-
-    #[test]
-    fn load_yaml_with_packages() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("config.yml");
-        std::fs::write(
-            &path,
-            r#"
-packages:
-  - name: core
-    path: crates/core
-    version_files:
-      - crates/core/Cargo.toml
-  - name: cli
-    path: crates/cli
-    tag_prefix: "cli-v"
-"#,
-        )
-        .unwrap();
-
-        let config = ReleaseConfig::load(&path).unwrap();
-        assert_eq!(config.packages.len(), 2);
-        assert_eq!(config.packages[0].name, "core");
-        assert_eq!(config.packages[0].path, "crates/core");
-        assert_eq!(config.packages[1].tag_prefix.as_deref(), Some("cli-v"));
-    }
-
-    #[test]
-    fn resolve_package_defaults() {
-        let config = ReleaseConfig {
-            packages: vec![PackageConfig {
-                name: "core".into(),
-                path: "crates/core".into(),
-                tag_prefix: None,
-                version_files: vec![],
-                changelog: None,
-
-                stage_files: vec![],
-            }],
-            ..Default::default()
-        };
-
-        let resolved = config.resolve_package(&config.packages[0]);
-        assert_eq!(resolved.tag_prefix, "core/v");
-        assert_eq!(resolved.path_filter.as_deref(), Some("crates/core"));
-        // Inherits root config values
-        assert_eq!(resolved.branches, config.branches);
-        assert!(resolved.packages.is_empty());
-    }
-
-    #[test]
-    fn resolve_package_overrides() {
-        let config = ReleaseConfig {
-            version_files: vec!["Cargo.toml".into()],
-            packages: vec![PackageConfig {
-                name: "cli".into(),
-                path: "crates/cli".into(),
-                tag_prefix: Some("cli-v".into()),
-                version_files: vec!["crates/cli/Cargo.toml".into()],
-                changelog: Some(ChangelogConfig {
-                    file: Some("crates/cli/CHANGELOG.md".into()),
-                    template: None,
-                }),
-                stage_files: vec!["crates/cli/Cargo.lock".into()],
-            }],
-            ..Default::default()
-        };
-
-        let resolved = config.resolve_package(&config.packages[0]);
-        assert_eq!(resolved.tag_prefix, "cli-v");
-        assert_eq!(resolved.version_files, vec!["crates/cli/Cargo.toml"]);
-        assert_eq!(
-            resolved.changelog.file.as_deref(),
-            Some("crates/cli/CHANGELOG.md")
-        );
-        assert_eq!(resolved.stage_files, vec!["crates/cli/Cargo.lock"]);
-    }
-
-    #[test]
-    fn find_package_found() {
-        let config = ReleaseConfig {
-            packages: vec![PackageConfig {
-                name: "core".into(),
-                path: "crates/core".into(),
-                tag_prefix: None,
-                version_files: vec![],
-                changelog: None,
-
-                stage_files: vec![],
-            }],
-            ..Default::default()
-        };
-
-        let pkg = config.find_package("core").unwrap();
-        assert_eq!(pkg.name, "core");
-    }
-
-    #[test]
-    fn find_package_not_found() {
-        let config = ReleaseConfig::default();
-        let err = config.find_package("nonexistent").unwrap_err();
-        assert!(err.to_string().contains("nonexistent"));
-        assert!(err.to_string().contains("no packages configured"));
-    }
-
-    #[test]
-    fn packages_not_serialized_when_empty() {
-        let config = ReleaseConfig::default();
-        let yaml = serde_yaml_ng::to_string(&config).unwrap();
-        assert!(!yaml.contains("packages"));
-    }
-
-    #[test]
-    fn default_template_parses() {
-        let template = default_config_template(&[]);
-        let config: ReleaseConfig = serde_yaml_ng::from_str(&template).unwrap();
-        let default = ReleaseConfig::default();
-        assert_eq!(config.branches, default.branches);
-        assert_eq!(config.tag_prefix, default.tag_prefix);
-        assert_eq!(config.commit_pattern, default.commit_pattern);
-        assert_eq!(config.breaking_section, default.breaking_section);
-        assert_eq!(config.types.len(), default.types.len());
-        assert!(config.floating_tags);
-        assert!(!config.sign_tags);
-        assert!(!config.draft);
-    }
-
-    #[test]
-    fn default_template_with_version_files() {
-        let template = default_config_template(&["Cargo.toml".into(), "package.json".into()]);
-        let config: ReleaseConfig = serde_yaml_ng::from_str(&template).unwrap();
-        assert_eq!(config.version_files, vec!["Cargo.toml", "package.json"]);
-    }
-
-    #[test]
-    fn default_template_contains_all_fields() {
-        let template = default_config_template(&[]);
-        for field in [
-            "branches",
-            "tag_prefix",
-            "commit_pattern",
-            "breaking_section",
-            "misc_section",
-            "types",
-            "changelog",
-            "version_files",
-            "version_files_strict",
-            "artifacts",
-            "floating_tags",
-            "stage_files",
-            "prerelease",
-            "sign_tags",
-            "draft",
-            "release_name_template",
-            "hooks",
-            "versioning",
-            "packages",
-        ] {
-            assert!(template.contains(field), "template missing field: {field}");
-        }
-    }
-
-    #[test]
-    fn merge_adds_missing_fields() {
-        let existing = "tag_prefix: rel-\n";
-        let merged = merge_config_yaml(existing).unwrap();
-        let config: ReleaseConfig = serde_yaml_ng::from_str(&merged).unwrap();
-        // User value preserved
-        assert_eq!(config.tag_prefix, "rel-");
-        // Defaults filled in
-        assert_eq!(config.branches, vec!["main"]);
-        assert_eq!(config.breaking_section, "Breaking Changes");
-        assert!(!config.types.is_empty());
-    }
-
-    #[test]
-    fn merge_preserves_user_values() {
-        let existing = "branches:\n  - develop\ntag_prefix: release-\nfloating_tags: true\n";
-        let merged = merge_config_yaml(existing).unwrap();
-        let config: ReleaseConfig = serde_yaml_ng::from_str(&merged).unwrap();
-        assert_eq!(config.branches, vec!["develop"]);
-        assert_eq!(config.tag_prefix, "release-");
-        assert!(config.floating_tags);
-    }
-
-    #[test]
-    fn merge_nested_changelog() {
-        let existing = "changelog:\n  file: CHANGELOG.md\n";
-        let merged = merge_config_yaml(existing).unwrap();
-        let config: ReleaseConfig = serde_yaml_ng::from_str(&merged).unwrap();
-        assert_eq!(config.changelog.file.as_deref(), Some("CHANGELOG.md"));
-        // template field should exist (merged from defaults)
-        assert!(config.changelog.template.is_none());
-    }
-
-    #[test]
-    fn hook_event_roundtrip() {
-        let mut hooks = BTreeMap::new();
-        hooks.insert(
-            HookEvent::PreRelease,
-            vec!["cargo test".to_string()],
-        );
-        let config = HooksConfig { hooks };
-        let yaml = serde_yaml_ng::to_string(&config).unwrap();
-        assert!(yaml.contains("pre_release"));
-        let parsed: HooksConfig = serde_yaml_ng::from_str(&yaml).unwrap();
-        assert!(parsed.hooks.contains_key(&HookEvent::PreRelease));
-    }
-
-    #[test]
-    fn versioning_mode_defaults_to_independent() {
-        let config = ReleaseConfig::default();
-        assert_eq!(config.versioning, VersioningMode::Independent);
-    }
-
-    #[test]
     fn versioning_mode_roundtrip() {
         for (mode, label) in [
             (VersioningMode::Independent, "independent"),
@@ -923,112 +750,5 @@ packages:
             let parsed: VersioningMode = serde_yaml_ng::from_str(&yaml).unwrap();
             assert_eq!(parsed, mode);
         }
-    }
-
-    #[test]
-    fn load_yaml_with_versioning_fixed() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("config.yml");
-        std::fs::write(
-            &path,
-            r#"
-versioning: fixed
-packages:
-  - name: core
-    path: crates/core
-    version_files:
-      - crates/core/Cargo.toml
-  - name: cli
-    path: crates/cli
-    version_files:
-      - crates/cli/Cargo.toml
-"#,
-        )
-        .unwrap();
-
-        let config = ReleaseConfig::load(&path).unwrap();
-        assert_eq!(config.versioning, VersioningMode::Fixed);
-        assert_eq!(config.packages.len(), 2);
-    }
-
-    #[test]
-    fn resolve_fixed_collects_all_version_files() {
-        let config = ReleaseConfig {
-            version_files: vec!["Cargo.toml".into()],
-            packages: vec![
-                PackageConfig {
-                    name: "core".into(),
-                    path: "crates/core".into(),
-                    tag_prefix: Some("core/v".into()),
-                    version_files: vec!["crates/core/Cargo.toml".into()],
-                    changelog: None,
-    
-                    stage_files: vec!["crates/core/Cargo.lock".into()],
-                },
-                PackageConfig {
-                    name: "cli".into(),
-                    path: "crates/cli".into(),
-                    tag_prefix: None,
-                    version_files: vec!["crates/cli/Cargo.toml".into()],
-                    changelog: None,
-    
-                    stage_files: vec![],
-                },
-            ],
-            versioning: VersioningMode::Fixed,
-            ..Default::default()
-        };
-
-        let resolved = config.resolve_fixed();
-        // Uses root tag_prefix, not per-package
-        assert_eq!(resolved.tag_prefix, "v");
-        // No path filter
-        assert!(resolved.path_filter.is_none());
-        // Collects version files from root + all packages
-        assert!(resolved.version_files.contains(&"Cargo.toml".to_string()));
-        assert!(
-            resolved
-                .version_files
-                .contains(&"crates/core/Cargo.toml".to_string())
-        );
-        assert!(
-            resolved
-                .version_files
-                .contains(&"crates/cli/Cargo.toml".to_string())
-        );
-        // Collects stage files
-        assert!(
-            resolved
-                .stage_files
-                .contains(&"crates/core/Cargo.lock".to_string())
-        );
-        // Packages cleared
-        assert!(resolved.packages.is_empty());
-    }
-
-    #[test]
-    fn resolve_fixed_deduplicates() {
-        let config = ReleaseConfig {
-            version_files: vec!["Cargo.toml".into()],
-            packages: vec![PackageConfig {
-                name: "core".into(),
-                path: "crates/core".into(),
-                tag_prefix: None,
-                version_files: vec!["Cargo.toml".into()], // duplicate of root
-                changelog: None,
-
-                stage_files: vec![],
-            }],
-            versioning: VersioningMode::Fixed,
-            ..Default::default()
-        };
-
-        let resolved = config.resolve_fixed();
-        let cargo_count = resolved
-            .version_files
-            .iter()
-            .filter(|f| *f == "Cargo.toml")
-            .count();
-        assert_eq!(cargo_count, 1);
     }
 }
