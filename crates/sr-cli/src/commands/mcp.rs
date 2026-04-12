@@ -327,6 +327,12 @@ impl SrMcpServer {
 
 /// Run the MCP server over stdio.
 pub async fn run() -> Result<()> {
+    eprintln!("sr mcp server running on stdio");
+    eprintln!("tools: sr_status, sr_diff, sr_log, sr_stage, sr_commit, sr_branch, sr_config");
+    eprintln!();
+    eprintln!("register: agentspec mcp add sr --command sr --args \"mcp serve\"");
+    eprintln!("press ctrl+c to stop");
+
     let server = SrMcpServer;
     let stdin = tokio::io::stdin();
     let stdout = tokio::io::stdout();
