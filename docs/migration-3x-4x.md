@@ -149,33 +149,73 @@ $ sr status --format json   # machine-readable, includes changelog preview
 
 Replaces `sr plan`, `sr version`, and `sr changelog` (preview). Changelog writing is now part of `sr release`.
 
+## Config restructured
+
+The flat `sr.yaml` is now grouped by concern:
+
+```yaml
+# 3.x (flat)
+branches: [main]
+tag_prefix: "v"
+commit_pattern: '...'
+types: [...]
+build_command: "..."
+pre_release_command: "..."
+hooks:
+  commit-msg: [sr hook commit-msg]
+
+# 4.x (grouped by operation)
+commit:
+  pattern: '...'
+  types: [...]
+
+release:
+  branches: [main]
+  tag_prefix: "v"
+  version_files: [Cargo.toml]
+  channels:
+    canary: { prerelease: canary }
+
+hooks:
+  pre_commit: ["cargo fmt --check"]
+  pre_release: ["cargo test"]
+  post_release: ["./notify.sh"]
+```
+
+**Removed fields:** `build_command`, `pre_release_command`, `post_release_command`, `lifecycle` — use `hooks.pre_release` / `hooks.post_release` instead.
+
+**Renamed:** `commit_pattern` → `commit.pattern`, `breaking_section` → `commit.breaking_section`.
+
+**Hooks restructured:** Git hook names (`commit-msg`, `pre-commit`) replaced with lifecycle events (`pre_commit`, `pre_release`, etc.). Structured steps with patterns removed — use simple shell commands.
+
 ## Architecture changes
 
-The `sr-ai` crate is now a pure SDK — no CLI dependencies (clap, crossterm, indicatif). All command handlers, terminal UI, and clap argument parsing moved to `sr-cli`. This enables using `sr-ai` as a library in other tools.
+Consolidated from 5 crates to 2. All logic lives in `sr-core`; `sr-cli` is the thin CLI binary.
 
 | Crate | 3.x | 4.x |
 |-------|-----|-----|
-| `sr-ai` | SDK + CLI commands + terminal UI | Pure SDK only |
-| `sr-cli` | Thin dispatch layer | All CLI concerns (commands, UI, args) |
-| `sr-core` | Pure SDK | Pure SDK + `ChannelConfig` |
-| `sr-github` | Release API only | Release API + PR methods |
+| `sr-ai` | AI backends, commands, UI | Removed (merged into sr-core) |
+| `sr-git` | Git implementation | Removed (merged into sr-core) |
+| `sr-github` | GitHub API | Removed (merged into sr-core) |
+| `sr-core` | Release logic only | Everything: AI, git, GitHub, config, release |
+| `sr-cli` | Thin dispatch + some logic | CLI only: commands, UI, args |
 
 ### For library consumers
 
-If you imported from `sr_ai::commands::*`, update to `sr_ai::services::*`:
+All imports now come from `sr_core`:
 
 ```rust
 // 3.x
 use sr_ai::commands::commit::{CommitPlan, CommitArgs};
-sr_ai::commands::commit::run(&args, &config).await?;
+use sr_core::config::ReleaseConfig;
+let config = ReleaseConfig::load(path)?;
 
 // 4.x
-use sr_ai::services::commit::{CommitPlan, PlanInput, generate_plan, execute_plan};
-let (result, metrics) = generate_plan(&repo, &input, &config, None).await?;
-let outcomes = execute_plan(&repo, &result.plan)?;
+use sr_core::ai::services::commit::{CommitPlan, PlanInput, generate_plan, execute_plan};
+use sr_core::config::Config;
+let config = Config::load(path)?;
+// Fields are now nested: config.commit.types, config.release.tag_prefix, etc.
 ```
-
-The `sr_ai::ui` module was removed. Terminal UI now lives in `sr-cli`.
 
 ## CI/CD migration
 

@@ -27,7 +27,7 @@
 </p>
 
 <p align="center">
-  <img src="showcase/sr-plan.png" alt="sr plan — release preview with changelog" width="600">
+  <img src="showcase/sr-plan.png" alt="sr status — release status with changelog preview" width="600">
 </p>
 
 ## Why?
@@ -102,7 +102,7 @@ The installer automatically adds `~/.local/bin` to your `PATH` in your shell pro
 ### GitHub Action (recommended)
 
 ```yaml
-- uses: urmzd/sr@v3
+- uses: urmzd/sr@v4
   with:
     github-token: ${{ secrets.GITHUB_TOKEN }}
 ```
@@ -126,13 +126,13 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      - uses: urmzd/sr@v3
+      - uses: urmzd/sr@v4
 ```
 
 Dry-run on pull requests:
 
 ```yaml
-      - uses: urmzd/sr@v3
+      - uses: urmzd/sr@v4
         with:
           command: release
           dry-run: "true"
@@ -141,7 +141,7 @@ Dry-run on pull requests:
 Use outputs in subsequent steps:
 
 ```yaml
-      - uses: urmzd/sr@v3
+      - uses: urmzd/sr@v4
         id: sr
       - if: steps.sr.outputs.released == 'true'
         run: echo "Released ${{ steps.sr.outputs.version }}"
@@ -156,7 +156,7 @@ Upload artifacts to the release:
           path: release-assets
           merge-multiple: true
 
-      - uses: urmzd/sr@v3
+      - uses: urmzd/sr@v4
         with:
           artifacts: "release-assets/*"
 ```
@@ -166,7 +166,7 @@ The `artifacts` input accepts glob patterns (newline or comma separated). All ma
 Verify the downloaded sr binary with a SHA256 checksum:
 
 ```yaml
-      - uses: urmzd/sr@v3
+      - uses: urmzd/sr@v4
         with:
           sha256: "abc123..."
 ```
@@ -182,7 +182,7 @@ For maximum security, pin the action to a full-length commit SHA:
 Run a build step between version bump and commit (useful for lock files, codegen, etc.):
 
 ```yaml
-      - uses: urmzd/sr@v3
+      - uses: urmzd/sr@v4
         with:
           build-command: "cargo build --release"
 ```
@@ -212,7 +212,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      - uses: urmzd/sr@v3
+      - uses: urmzd/sr@v4
         with:
           force: ${{ github.event.inputs.force || 'false' }}
 ```
@@ -221,7 +221,7 @@ jobs:
 
 | Input | Description | Default |
 |-------|-------------|---------|
-| `command` | The `sr` subcommand to run (`release`, `plan`, `changelog`, `version`, `config`, `completions`, `commit`, `rebase`, `review`, `explain`, `branch`, `pr`, `ask`, `cache`) | `release` |
+| `command` | The `sr` subcommand to run (`release`, `status`, `config`, `completions`, `commit`, `review`, `worktree`, `pr`, `cache`) | `release` |
 | `dry-run` | Preview changes without executing them | `false` |
 | `force` | Re-release the current tag (use when a previous release partially failed) | `false` |
 | `config` | Path to the config file | `sr.yaml` |
@@ -360,7 +360,7 @@ jobs:
           fetch-depth: 0
           token: ${{ steps.app-token.outputs.token }}
 
-      - uses: urmzd/sr@v3
+      - uses: urmzd/sr@v4
         with:
           github-token: ${{ steps.app-token.outputs.token }}
 ```
@@ -392,49 +392,44 @@ sr completions bash >> ~/.bashrc
 
 ## Developer Workflow
 
-### Commit message validation
+### Lifecycle hooks
 
-`sr` manages git hooks through the `hooks` section in `sr.yaml`. Hook entries can be **simple commands** (strings) or **structured steps** with file-pattern matching. Every command receives a JSON context on stdin with the hook's arguments — pipe it to `jq`, parse it in your script, or ignore it.
+`sr` runs hooks at key points in every workflow command. Each hook event maps to a list of shell commands in `sr.yaml`:
 
 ```yaml
 # sr.yaml
 hooks:
-  commit-msg:
-    - sr hook commit-msg                          # simple command
-  pre-commit:
-    - step: format                                # structured step — runs only when staged files match
-      patterns:
-        - "*.rs"
-      rules:
-        - "rustfmt --check --edition 2024 {files}"
-    - step: lint
-      patterns:
-        - "*.rs"
-      rules:
-        - "cargo clippy --workspace -- -D warnings"
-  pre-push:
-    - cargo test --workspace                      # simple command
+  pre_commit:
+    - "cargo fmt --check"
+    - "cargo clippy --workspace -- -D warnings"
+  pre_release:
+    - "cargo test --workspace"
+  post_release:
+    - "./scripts/notify-slack.sh"
 ```
 
-Structured steps only run when staged files match the `patterns` globs. Rules containing `{files}` receive the matched file list.
+**Available events:**
 
-Hooks are automatically synced — `.githooks/` shims are created, updated, and removed to match `sr.yaml` whenever you run `sr init`, `sr release`, or `sr commit`:
+| Event | When it runs |
+|-------|-------------|
+| `pre_commit` | Before `sr commit` creates commits |
+| `post_commit` | After `sr commit` completes |
+| `pre_branch` | Before `sr worktree` creates the worktree |
+| `post_branch` | After `sr worktree` completes |
+| `pre_pr` | Before `sr pr` creates the PR |
+| `post_pr` | After `sr pr` completes |
+| `pre_review` | Before `sr review` runs |
+| `post_review` | After `sr review` completes |
+| `pre_release` | Before `sr release` starts (validation, tests) |
+| `post_release` | After `sr release` completes (notifications, deploys) |
+
+Release hooks receive `SR_VERSION` and `SR_TAG` environment variables.
 
 ```bash
-sr init              # writes fully-commented sr.yaml + syncs hooks
-sr init --merge      # add new default fields to existing sr.yaml without overwriting customizations
-sr init --force      # overwrite sr.yaml with a fresh fully-commented template
+sr init              # writes fully-commented sr.yaml
+sr init --merge      # add new default fields without overwriting customizations
+sr init --force      # overwrite with fresh template
 ```
-
-**JSON context** piped to each command (example for `commit-msg`):
-
-```json
-{"hook": "commit-msg", "args": [".git/COMMIT_EDITMSG"], "message_file": ".git/COMMIT_EDITMSG"}
-```
-
-Known hooks get named fields (`message_file`, `remote_name`, `remote_url`, `upstream`, `branch`, etc.) alongside the raw `args` array. Unknown hooks still receive `hook` and `args`.
-
-The built-in `sr hook commit-msg` validates the first line against the configured `commit_pattern` and `types`. Merge commits and rebase-generated commits (`fixup!`, `squash!`, `amend!`) are always allowed through.
 
 ### End-to-end release flow
 
@@ -465,7 +460,7 @@ sr worktree → sr commit → sr pr → sr review → merge → sr status → sr
 Use the action outputs to run steps conditionally:
 
 ```yaml
-- uses: urmzd/sr@v3
+- uses: urmzd/sr@v4
   id: sr
 - if: steps.sr.outputs.released == 'true'
   run: ./deploy.sh ${{ steps.sr.outputs.version }}
@@ -614,17 +609,15 @@ Running `sr init` generates a fully-commented `sr.yaml` with every available opt
 | `version_files_strict` | `bool` | `false` | When `true`, fail the release if any version file is unsupported. When `false`, skip unsupported files with a warning |
 | `artifacts` | `string[]` | `[]` | Glob patterns for files to upload to the GitHub release |
 | `floating_tags` | `bool` | `true` | Create floating major version tags (e.g. `v3` always points to the latest `v3.x.x` release) |
-| `build_command` | `string?` | `null` | Shell command to run after version bump but before commit. `SR_VERSION` and `SR_TAG` env vars are set |
 | `prerelease` | `string?` | `null` | Pre-release identifier (e.g. `"alpha"`, `"beta"`, `"rc"`). When set, versions are formatted as `X.Y.Z-<id>.N` |
-| `stage_files` | `string[]` | `[]` | Additional file globs to stage after `build_command` runs (e.g. `["Cargo.lock"]`) |
-| `pre_release_command` | `string?` | `null` | Shell command to run before the release starts (validation, checks). `SR_VERSION` and `SR_TAG` env vars are set |
-| `post_release_command` | `string?` | `null` | Shell command to run after the release completes (notifications, deployments). `SR_VERSION` and `SR_TAG` env vars are set |
+| `stage_files` | `string[]` | `[]` | Additional file globs to stage in the release commit (e.g. `["Cargo.lock"]`) |
 | `sign_tags` | `bool` | `false` | Sign annotated tags with GPG/SSH (`git tag -s` instead of `git tag -a`). Requires a signing key configured in git |
 | `draft` | `bool` | `false` | Create GitHub releases as drafts. Draft releases are not visible to the public until manually published |
 | `release_name_template` | `string?` | `null` | [Minijinja](https://docs.rs/minijinja) template for the GitHub release name. Variables: `version`, `tag_name`, `tag_prefix`. Default: uses the tag name (e.g. `v1.2.0`) |
 | `changelog.template` | `string?` | `null` | Custom [minijinja](https://docs.rs/minijinja) template for changelog rendering. See template variables below |
-| `hooks` | `map<string, HookEntry[]>` | `{commit-msg: ["sr hook commit-msg"]}` | Git hooks — simple commands or structured steps with file-pattern matching. See [Commit message validation](#commit-message-validation) |
-| `lifecycle` | `LifecycleStep[]` | `[]` | Structured release lifecycle hooks. Each step runs at a specific point in the release flow. See [Lifecycle hooks](#lifecycle-hooks) |
+| `hooks` | `map<HookEvent, string[]>` | `{}` | Lifecycle hooks — shell commands keyed by event (`pre_commit`, `pre_release`, `post_release`, etc.). See [Lifecycle hooks](#lifecycle-hooks) |
+| `channels` | `map<string, ChannelConfig>` | `{}` | Named release channels for trunk-based promotion. See [Release channels](#release-channels) |
+| `default_channel` | `string?` | `null` | Default channel for `sr release` when no `--channel` flag given |
 | `packages` | `PackageConfig[]` | `[]` | Monorepo packages — each released independently. See [Monorepo support](#monorepo-support) |
 
 ### Example config
@@ -701,21 +694,12 @@ artifacts: []
 # Create floating major version tags (e.g. "v3" pointing to latest v3.x.x).
 floating_tags: true
 
-# Shell command to run after version files are bumped (e.g. "cargo build --release").
-build_command:
-
-# Additional files/globs to stage after build_command runs (e.g. Cargo.lock).
+# Additional files/globs to stage in the release commit (e.g. Cargo.lock).
 stage_files: []
 
 # Pre-release identifier (e.g. "alpha", "beta", "rc").
 # When set, versions are formatted as X.Y.Z-<id>.N where N auto-increments.
 prerelease:
-
-# Shell command to run before the release starts (validation, checks).
-pre_release_command:
-
-# Shell command to run after the release completes (notifications, deployments).
-post_release_command:
 
 # Sign annotated tags with GPG/SSH (git tag -s).
 sign_tags: false
@@ -728,35 +712,29 @@ draft: false
 # Default: uses the tag name (e.g. "v1.2.0").
 release_name_template:
 
-# Git hooks configuration.
-# Each key is a git hook name. Values can be simple commands or structured steps.
-# Steps with patterns only run when staged files match the globs.
-# Rules containing {files} receive the matched file list.
-hooks:
-  commit-msg:
-    - sr hook commit-msg
-  # pre-commit:
-  #   - step: format
-  #     patterns:
-  #       - "*.rs"
-  #     rules:
-  #       - "rustfmt --check --edition 2024 {files}"
-  #   - step: lint
-  #     patterns:
-  #       - "*.rs"
-  #     rules:
-  #       - "cargo clippy --workspace -- -D warnings"
+# Lifecycle hooks — shell commands keyed by event.
+# Available events: pre_commit, post_commit, pre_branch, post_branch,
+#   pre_pr, post_pr, pre_review, post_review, pre_release, post_release.
+# Release hooks receive SR_VERSION and SR_TAG env vars.
+# hooks:
+#   pre_commit:
+#     - "cargo fmt --check"
+#     - "cargo clippy -- -D warnings"
+#   pre_release:
+#     - "cargo test --workspace"
+#   post_release:
+#     - "./scripts/notify-slack.sh"
 
-# Release lifecycle hooks — run at specific points in the release pipeline.
-# Coexists with pre_release_command/post_release_command (flat commands run first).
-# Supported events: pre_release, post_bump, post_build, post_release
-# lifecycle:
-#   - name: lint
-#     when: pre_release
-#     run: "cargo clippy -- -D warnings"
-#   - name: notify
-#     when: post_release
-#     run: "./scripts/notify-slack.sh"
+# Release channels for trunk-based promotion.
+# Each channel can override prerelease, draft, and artifacts.
+# channels:
+#   canary:
+#     prerelease: canary
+#   rc:
+#     prerelease: rc
+#     draft: true
+#   stable: {}
+# default_channel: stable
 
 # Monorepo packages (uncomment and configure if needed).
 # packages:
@@ -922,68 +900,50 @@ changelog:
 
 ### Release execution order
 
-Understanding the execution order helps when configuring hooks:
+1. **`pre_release` hooks** — validation, tests
+2. **Bump version files** — all configured `version_files` are updated on disk
+3. **Write changelog** — the changelog file is written (if configured)
+4. **Git commit** — version files + changelog + `stage_files` are staged and committed as `chore(release): <tag> [skip ci]`
+5. **Create and push tag** — annotated tag at HEAD (signed with GPG/SSH when `sign_tags: true`)
+6. **Create/update floating tag** (if `floating_tags: true`)
+7. **Create or update GitHub release** — uses PATCH to preserve existing assets on re-runs; supports `draft` mode
+8. **Upload artifacts** — MIME-type-aware uploads to the GitHub release
+9. **Verify release** — confirms the GitHub release exists and is accessible
+10. **`post_release` hooks** — notifications, deployments
 
-1. **Pre-release command** — `pre_release_command` runs first (validation, checks)
-2. **Lifecycle: `pre_release`** — all `lifecycle` steps with `when: pre_release` run
-3. **Bump version files** — all configured `version_files` are updated on disk
-4. **Lifecycle: `post_bump`** — all `lifecycle` steps with `when: post_bump` run
-5. **Write changelog** — the changelog file is written (if configured)
-6. **Run build command** — `build_command` runs with `SR_VERSION`/`SR_TAG` set
-7. **Lifecycle: `post_build`** — all `lifecycle` steps with `when: post_build` run
-8. **Git commit** — version files + changelog + `stage_files` are staged and committed as `chore(release): <tag> [skip ci]`
-9. **Create and push tag** — annotated tag at HEAD (signed with GPG/SSH when `sign_tags: true`)
-10. **Create/update floating tag** (if `floating_tags: true`)
-11. **Create or update GitHub release** — uses PATCH to preserve existing assets on re-runs; supports `draft` mode
-12. **Upload artifacts** — MIME-type-aware uploads to the GitHub release
-13. **Verify release** — confirms the GitHub release exists and is accessible
-14. **Post-release command** — `post_release_command` runs last (notifications, deployments)
-15. **Lifecycle: `post_release`** — all `lifecycle` steps with `when: post_release` run
+If any step in 1-3 fails, modified files are automatically rolled back to their original contents. Steps 5-9 are idempotent — re-running with `--force` will skip already-completed steps.
 
-If any step in 1-7 fails, modified files are automatically rolled back to their original contents. Steps 9-13 are idempotent — re-running with `--force` will skip already-completed steps.
+### Release channels
 
-### Lifecycle hooks
-
-The `lifecycle` config provides structured, named steps that run at specific points in the release pipeline. It coexists with the simpler `pre_release_command`/`post_release_command` fields — flat commands run first at their event point, then lifecycle steps run.
-
-**Supported events:**
-
-| Event | When it runs |
-|-------|-------------|
-| `pre_release` | Before any mutations — validation, linting, tests |
-| `post_bump` | After version files are bumped, before build command |
-| `post_build` | After build command completes, before git commit |
-| `post_release` | After everything completes — notifications, deployments |
-
-**Example:**
+Channels model trunk-based promotion — the same commits get progressively promoted from less stable to more stable:
 
 ```yaml
-lifecycle:
-  - name: lint
-    when: pre_release
-    run: "cargo clippy -- -D warnings"
-  - name: verify-version
-    when: post_bump
-    run: "grep -q $SR_VERSION Cargo.toml"
-  - name: check-artifacts
-    when: post_build
-    run: "./scripts/check-artifacts.sh"
-  - name: notify
-    when: post_release
-    run: "curl -X POST $SLACK_WEBHOOK -d '{\"text\": \"Released $SR_TAG\"}'"
+channels:
+  canary:
+    prerelease: canary
+  rc:
+    prerelease: rc
+    draft: true
+  stable: {}
+
+default_channel: stable
 ```
 
-All lifecycle steps receive `SR_VERSION` and `SR_TAG` environment variables. If any step fails, the release aborts (with rollback for pre-commit steps).
+```bash
+sr release --channel canary     # 1.2.0-canary.1
+sr release --channel rc         # 1.2.0-rc.1
+sr release                      # 1.2.0 (stable, uses default_channel)
+```
 
-**Lifecycle step fields:**
+All channels release from the same trunk branch. No separate release branches.
 
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| `name` | `string` | Yes | Step name (used in log output) |
-| `when` | `string` | Yes | Lifecycle event: `pre_release`, `post_bump`, `post_build`, or `post_release` |
-| `run` | `string` | Yes | Shell command to execute |
+**Channel fields:**
 
-> **Note:** `lifecycle` is a root-level config field only — it is not overridable per-package in monorepo configs.
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `prerelease` | `string?` | `null` | Pre-release identifier. None = stable |
+| `draft` | `bool` | `false` | Create GitHub release as draft |
+| `artifacts` | `string[]` | `[]` | Additional artifact patterns for this channel |
 
 ### Pre-releases
 
@@ -1031,10 +991,8 @@ Each package is released independently — commits are filtered by path, so only
 Use `-p/--package` to target a specific package:
 
 ```bash
-sr release -p core              # release only the core package
-sr plan -p cli --format json    # preview next release for cli
-sr version -p core --short      # show next version for core
-sr changelog -p cli --write     # generate changelog for cli
+sr release -p core                # release only the core package
+sr status -p cli --format json    # preview next release for cli
 ```
 
 **Package config fields:**
@@ -1103,10 +1061,7 @@ Set `sign_tags: true` in `sr.yaml` or pass `--sign-tags`. You must have a GPG or
 
 | Crate | Description |
 |-------|-------------|
-| [`sr-core`](crates/sr-core/) | Pure domain logic — traits, config, versioning, changelog |
-| [`sr-git`](crates/sr-git/) | Git implementation (native `git` CLI) |
-| [`sr-github`](crates/sr-github/) | GitHub VCS provider (REST API, PR operations) |
-| [`sr-ai`](crates/sr-ai/) | Pure AI SDK — services, caching, prompts (no CLI dependencies) |
+| [`sr-core`](crates/sr-core/) | Everything: config, release logic, AI services, git, GitHub API |
 | [`sr-cli`](crates/sr-cli/) | CLI binary — command handlers, terminal UI, argument parsing |
 
 `action.yml` in the repo root is the GitHub Action composite wrapper.
