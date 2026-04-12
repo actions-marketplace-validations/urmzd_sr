@@ -1,52 +1,50 @@
 use anyhow::{Result, bail};
-use sr_core::ai::BackendConfig;
-use sr_core::ai::git::GitRepo;
-use sr_core::ai::services::worktree::{self, WorktreeInput};
+use sr_core::git::GitRepo;
+use std::io::{self, Write};
 use std::path::Path;
-
-use super::ui;
 
 #[derive(Debug, clap::Args)]
 pub struct WorktreeArgs {
-    /// Additional context or instructions for branch naming
-    #[arg(short = 'M', long)]
-    pub message: Option<String>,
+    /// Branch name for the new worktree
+    pub branch: String,
+
+    /// Skip confirmation prompts
+    #[arg(short, long)]
+    pub yes: bool,
 }
 
-pub async fn run(args: &WorktreeArgs, backend_config: &BackendConfig) -> Result<()> {
+pub async fn run(args: &WorktreeArgs) -> Result<()> {
     let repo = GitRepo::discover()?;
     let repo_root = repo.root().to_path_buf();
-
-    // Check if there are changes to carry over
     let has_changes = repo.has_any_changes()?;
 
-    // Suggest branch name
-    let spinner = ui::spinner("Suggesting branch name...");
-    let input = WorktreeInput {
-        context: args.message.as_deref(),
-    };
-    let branch_name = worktree::suggest_branch(&repo, &input, backend_config).await?;
-    ui::spinner_done(&spinner, Some(&branch_name));
-
-    // Determine worktree path: sibling directory named <repo>-<branch>
     let repo_dir_name = repo_root
         .file_name()
         .and_then(|n| n.to_str())
         .unwrap_or("repo");
-    let worktree_dir_name = format!("{repo_dir_name}-{branch_name}");
+    let worktree_dir_name = format!("{repo_dir_name}-{}", args.branch);
     let worktree_path = repo_root
         .parent()
         .unwrap_or(Path::new("."))
         .join(&worktree_dir_name);
 
     if worktree_path.exists() {
-        bail!(
-            "worktree path already exists: {}",
-            worktree_path.display()
-        );
+        bail!("worktree path already exists: {}", worktree_path.display());
     }
 
-    // Stash changes if any (so they can be applied in the worktree)
+    if has_changes && !args.yes {
+        eprintln!("uncommitted changes will be stashed and moved to the new worktree.");
+        eprint!("continue? [y/N] ");
+        io::stderr().flush()?;
+
+        let mut answer = String::new();
+        io::stdin().read_line(&mut answer)?;
+        if !answer.trim().eq_ignore_ascii_case("y") {
+            bail!("cancelled");
+        }
+    }
+
+    // Stash changes if any
     let stashed = if has_changes {
         let output = std::process::Command::new("git")
             .args(["-C", &repo_root.to_string_lossy()])
@@ -57,20 +55,13 @@ pub async fn run(args: &WorktreeArgs, backend_config: &BackendConfig) -> Result<
         false
     };
 
-    // Create worktree with new branch
+    // Create worktree
     let status = std::process::Command::new("git")
         .args(["-C", &repo_root.to_string_lossy()])
-        .args([
-            "worktree",
-            "add",
-            "-b",
-            &branch_name,
-            &worktree_path.to_string_lossy(),
-        ])
+        .args(["worktree", "add", "-b", &args.branch, &worktree_path.to_string_lossy()])
         .status()?;
 
     if !status.success() {
-        // Unstash if we stashed
         if stashed {
             let _ = std::process::Command::new("git")
                 .args(["-C", &repo_root.to_string_lossy()])
@@ -80,27 +71,22 @@ pub async fn run(args: &WorktreeArgs, backend_config: &BackendConfig) -> Result<
         bail!("failed to create worktree");
     }
 
-    // Apply stashed changes in the worktree
+    // Apply stashed changes
     if stashed {
-        let pop_output = std::process::Command::new("git")
+        let pop = std::process::Command::new("git")
             .args(["-C", &worktree_path.to_string_lossy()])
             .args(["stash", "pop"])
             .output()?;
 
-        if !pop_output.status.success() {
-            let stderr = String::from_utf8_lossy(&pop_output.stderr);
-            eprintln!("warning: failed to apply changes in worktree: {}", stderr.trim());
-            eprintln!("your changes are still in the stash — run `git stash pop` in the worktree");
+        if !pop.status.success() {
+            let stderr = String::from_utf8_lossy(&pop.stderr);
+            eprintln!("warning: failed to apply changes: {}", stderr.trim());
+            eprintln!("your changes are in the stash — run `git stash pop` in the worktree");
         }
     }
 
-    ui::phase_ok(
-        "Worktree created",
-        Some(&worktree_path.to_string_lossy()),
-    );
-    println!();
-    println!("  cd {}", worktree_path.display());
-    println!();
+    eprintln!("worktree created: {}", worktree_path.display());
+    eprintln!("  cd {}", worktree_path.display());
 
     Ok(())
 }

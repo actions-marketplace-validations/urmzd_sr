@@ -1,4 +1,3 @@
-pub mod ai;
 pub mod changelog;
 pub mod commit;
 pub mod config;

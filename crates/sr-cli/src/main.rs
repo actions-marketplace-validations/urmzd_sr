@@ -4,7 +4,6 @@ use std::path::Path;
 use std::process::ExitCode;
 
 use clap::{CommandFactory, Parser, Subcommand};
-use sr_core::ai::{Backend, BackendConfig};
 use sr_core::changelog::DefaultChangelogFormatter;
 use sr_core::commit::ConfiguredCommitParser;
 use sr_core::config::{Config, DEFAULT_CONFIG_FILE, LEGACY_CONFIG_FILE, VersioningMode};
@@ -14,20 +13,8 @@ use sr_core::native_git::NativeGitRepository;
 use sr_core::github::GitHubProvider;
 
 #[derive(Parser)]
-#[command(name = "sr", about = "AI-powered release engineering CLI", version)]
+#[command(name = "sr", about = "Release engineering CLI", version)]
 struct Cli {
-    /// AI backend to use (gemini or github-models)
-    #[arg(long, global = true, env = "SR_BACKEND")]
-    backend: Option<Backend>,
-
-    /// AI model to use
-    #[arg(long, global = true, env = "SR_MODEL")]
-    model: Option<String>,
-
-    /// Enable debug output
-    #[arg(long, global = true, env = "SR_DEBUG")]
-    debug: bool,
-
     #[command(subcommand)]
     command: Commands,
 }
@@ -73,7 +60,6 @@ enum Commands {
         draft: bool,
     },
 
-
     /// Show repo status: unreleased commits, next version, changelog preview, open PRs
     Status {
         /// Target a specific package in a monorepo
@@ -109,21 +95,20 @@ enum Commands {
         shell: clap_complete::Shell,
     },
 
-    // --- AI-powered commands (handlers in commands/) ---
-    /// Generate atomic commits from changes (use --rebase to reorganize existing commits)
+    /// Commit staged changes with a message
     Commit(commands::commit::CommitArgs),
 
-    /// AI code review of current branch's GitHub PR
+    /// Fetch and display PR diff for current branch
     Review(commands::review::ReviewArgs),
 
-    /// Create a worktree with AI-suggested branch name
+    /// Create a git worktree with a new branch
     Worktree(commands::worktree::WorktreeArgs),
 
-    /// Generate PR title + body from branch commits
+    /// Create a pull request from current branch
     Pr(commands::pr::PrArgs),
 
-    /// Manage the AI commit plan cache
-    Cache(commands::cache::CacheArgs),
+    /// Interactive rebase of recent commits
+    Rebase(commands::rebase::RebaseArgs),
 
     /// Update sr to the latest version
     Update,
@@ -134,7 +119,6 @@ enum PlanFormat {
     Human,
     Json,
 }
-
 
 use sr_core::release::NoopVcsProvider;
 
@@ -265,7 +249,6 @@ fn resolve_config_path() -> std::path::PathBuf {
     }
 }
 
-
 fn self_update() -> anyhow::Result<()> {
     eprintln!("current version: {}", env!("CARGO_PKG_VERSION"));
 
@@ -283,12 +266,6 @@ fn self_update() -> anyhow::Result<()> {
 
 async fn run() -> anyhow::Result<()> {
     let cli = Cli::parse();
-
-    let backend_config = BackendConfig {
-        backend: cli.backend,
-        model: cli.model,
-        debug: cli.debug,
-    };
 
     match cli.command {
         Commands::Init { force, merge } => {
@@ -342,7 +319,6 @@ async fn run() -> anyhow::Result<()> {
             let config = load_config_for_package(package.as_deref())?;
             let tag_prefix = config.release.tag_prefix.clone();
 
-            // Get current branch
             let git = NativeGitRepository::open(Path::new("."))?;
             let branch_output = std::process::Command::new("git")
                 .args(["branch", "--show-current"])
@@ -434,19 +410,11 @@ async fn run() -> anyhow::Result<()> {
         }
 
         Commands::Release {
-            package,
-            channel,
-            dry_run,
-            artifacts,
-            force,
-            stage_files,
-            prerelease,
-            sign_tags,
-            draft,
+            package, channel, dry_run, artifacts, force,
+            stage_files, prerelease, sign_tags, draft,
         } => {
             let mut config = load_config_for_package(package.as_deref())?;
 
-            // Resolve channel (CLI flag or default_channel from config)
             let channel_name = channel.or_else(|| config.release.default_channel.clone());
             if let Some(name) = &channel_name {
                 config = config.resolve_channel(name).map_err(|e| anyhow::anyhow!("{e}"))?;
@@ -506,15 +474,11 @@ async fn run() -> anyhow::Result<()> {
             Ok(())
         }
 
-        // --- AI-powered commands (delegated to commands/) ---
-        Commands::Commit(args) => {
-            commands::commit::run(&args, &backend_config).await
-        }
-        Commands::Review(args) => commands::review::run(&args, &backend_config).await,
-        Commands::Worktree(args) => commands::worktree::run(&args, &backend_config).await,
-        Commands::Pr(args) => commands::pr::run(&args, &backend_config).await,
-        Commands::Cache(args) => commands::cache::run(&args),
-
+        Commands::Commit(args) => commands::commit::run(&args).await,
+        Commands::Review(args) => commands::review::run(&args).await,
+        Commands::Worktree(args) => commands::worktree::run(&args).await,
+        Commands::Pr(args) => commands::pr::run(&args).await,
+        Commands::Rebase(args) => commands::rebase::run(&args).await,
         Commands::Update => self_update(),
     }
 }

@@ -1,7 +1,99 @@
 use anyhow::{Context, Result, bail};
+use semver::Version;
+use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::process::Command;
+
+use crate::commit::Commit;
+use crate::error::ReleaseError;
+
+fn sha256_hex(data: &[u8]) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(data);
+    format!("{:x}", hasher.finalize())
+}
+
+/// Information about a git tag.
+#[derive(Debug, Clone)]
+pub struct TagInfo {
+    pub name: String,
+    pub version: Version,
+    pub sha: String,
+}
+
+/// Abstraction over git operations.
+pub trait GitRepository: Send + Sync {
+    /// Find the latest semver tag matching the configured prefix.
+    fn latest_tag(&self, prefix: &str) -> Result<Option<TagInfo>, ReleaseError>;
+
+    /// List commits between a starting point (exclusive) and HEAD (inclusive).
+    /// If `from` is `None`, returns all commits reachable from HEAD.
+    fn commits_since(&self, from: Option<&str>) -> Result<Vec<Commit>, ReleaseError>;
+
+    /// Create an annotated tag at HEAD. When `sign` is true, uses `-s` for GPG/SSH signing.
+    fn create_tag(&self, name: &str, message: &str, sign: bool) -> Result<(), ReleaseError>;
+
+    /// Push a tag to the remote.
+    fn push_tag(&self, name: &str) -> Result<(), ReleaseError>;
+
+    /// Stage files and commit (skips git hooks via --no-verify).
+    /// Returns Ok(false) if nothing to commit.
+    fn stage_and_commit(&self, paths: &[&str], message: &str) -> Result<bool, ReleaseError>;
+
+    /// Check if the working tree has uncommitted changes.
+    fn is_dirty(&self) -> Result<bool, ReleaseError>;
+
+    /// Push current branch to origin.
+    fn push(&self) -> Result<(), ReleaseError>;
+
+    /// Check if a tag exists locally.
+    fn tag_exists(&self, name: &str) -> Result<bool, ReleaseError>;
+
+    /// Check if a tag exists on the remote.
+    fn remote_tag_exists(&self, name: &str) -> Result<bool, ReleaseError>;
+
+    /// List all semver tags matching prefix, sorted by version ascending.
+    fn all_tags(&self, prefix: &str) -> Result<Vec<TagInfo>, ReleaseError>;
+
+    /// List commits between two refs (exclusive `from`, inclusive `to`).
+    /// If `from` is None, returns all commits reachable from `to`.
+    fn commits_between(&self, from: Option<&str>, to: &str) -> Result<Vec<Commit>, ReleaseError>;
+
+    /// Get the date (YYYY-MM-DD) of the commit a tag points to.
+    fn tag_date(&self, tag_name: &str) -> Result<String, ReleaseError>;
+
+    /// Force-create a lightweight tag at HEAD, overwriting if it already exists.
+    fn force_create_tag(&self, name: &str) -> Result<(), ReleaseError>;
+
+    /// Force-push a tag to the remote, overwriting the remote tag if it exists.
+    fn force_push_tag(&self, name: &str) -> Result<(), ReleaseError>;
+
+    /// Return the full SHA of HEAD.
+    fn head_sha(&self) -> Result<String, ReleaseError>;
+
+    /// Like `commits_since`, but only includes commits that touched files under `path`.
+    fn commits_since_in_path(
+        &self,
+        from: Option<&str>,
+        path: &str,
+    ) -> Result<Vec<Commit>, ReleaseError> {
+        // Default: ignore path filter (for test fakes and backwards compat)
+        let _ = path;
+        self.commits_since(from)
+    }
+
+    /// Like `commits_between`, but only includes commits that touched files under `path`.
+    fn commits_between_in_path(
+        &self,
+        from: Option<&str>,
+        to: &str,
+        path: &str,
+    ) -> Result<Vec<Commit>, ReleaseError> {
+        let _ = path;
+        self.commits_between(from, to)
+    }
+}
 
 /// Strip C-style quoting that git applies to paths containing spaces,
 /// non-ASCII characters, or other special bytes. Git wraps such paths
@@ -69,7 +161,7 @@ impl GitRepo {
             .context("failed to run git")?;
 
         if !output.status.success() {
-            bail!(crate::ai::error::SrAiError::NotAGitRepo);
+            bail!("not in a git repository");
         }
 
         let root = String::from_utf8(output.stdout)
@@ -93,11 +185,7 @@ impl GitRepo {
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
-            bail!(crate::ai::error::SrAiError::GitCommand(format!(
-                "git {} failed: {}",
-                args.join(" "),
-                stderr.trim()
-            )));
+            bail!("git {} failed: {}", args.join(" "), stderr.trim());
         }
 
         Ok(String::from_utf8_lossy(&output.stdout).to_string())
@@ -176,10 +264,7 @@ impl GitRepo {
         let out = child.wait_with_output()?;
         if !out.status.success() {
             let stderr = String::from_utf8_lossy(&out.stderr);
-            bail!(crate::ai::error::SrAiError::GitCommand(format!(
-                "git commit failed: {}",
-                stderr.trim()
-            )));
+            bail!("git commit failed: {}", stderr.trim());
         }
 
         Ok(())
@@ -537,7 +622,7 @@ impl GitRepo {
 fn snapshot_dir_for(repo_root: &std::path::Path) -> Option<PathBuf> {
     let base = dirs::data_local_dir()?;
     let repo_id =
-        &crate::ai::cache::fingerprint::sha256_hex(repo_root.to_string_lossy().as_bytes())[..16];
+        &sha256_hex(repo_root.to_string_lossy().as_bytes())[..16];
     Some(base.join("sr").join("snapshots").join(repo_id))
 }
 

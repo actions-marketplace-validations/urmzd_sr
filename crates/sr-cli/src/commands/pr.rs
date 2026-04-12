@@ -1,25 +1,24 @@
 use anyhow::Result;
-use sr_core::ai::BackendConfig;
-use sr_core::ai::git::GitRepo;
-use sr_core::ai::services::pr::{self, PrInput};
-
-use super::ui;
+use sr_core::git::GitRepo;
 
 #[derive(Debug, clap::Args)]
 pub struct PrArgs {
-    /// Additional context or instructions for PR generation
-    #[arg(short = 'M', long)]
-    pub message: Option<String>,
+    /// PR title (auto-generated from branch name if omitted)
+    #[arg(short, long)]
+    pub title: Option<String>,
 
-    /// Draft PR
+    /// PR body (auto-generated from commit log if omitted)
+    #[arg(short, long)]
+    pub body: Option<String>,
+
+    /// Create as draft PR
     #[arg(short, long)]
     pub draft: bool,
 }
 
-pub async fn run(args: &PrArgs, backend_config: &BackendConfig) -> Result<()> {
+pub async fn run(args: &PrArgs) -> Result<()> {
     let repo = GitRepo::discover()?;
 
-    // Auto-detect base branch from sr.yaml config, fallback to "main"
     let config = sr_core::config::Config::find_config(repo.root().as_path())
         .map(|(path, _)| sr_core::config::Config::load(&path))
         .transpose()?
@@ -31,24 +30,23 @@ pub async fn run(args: &PrArgs, backend_config: &BackendConfig) -> Result<()> {
         .cloned()
         .unwrap_or_else(|| "main".to_string());
 
-    let spinner = ui::spinner("Generating PR...");
+    let branch = repo.current_branch()?;
 
-    let input = PrInput {
-        base: &base,
-        message: args.message.as_deref(),
+    let title = args
+        .title
+        .clone()
+        .unwrap_or_else(|| branch.replace(['/', '-', '_'], " "));
+
+    let body = match &args.body {
+        Some(b) => b.clone(),
+        None => {
+            let log = repo.log_range(&format!("{base}..HEAD"), None)?;
+            format!("## Commits\n\n{log}")
+        }
     };
-    let content = pr::generate(&repo, &input, backend_config).await?;
-    spinner.finish_and_clear();
 
-    println!("Title: {}", content.title);
-    println!();
-    println!("{}", content.body);
-
-    // Always create/update the PR
     let mut cmd = std::process::Command::new("gh");
-    cmd.args([
-        "pr", "create", "--title", &content.title, "--body", &content.body, "--base", &base,
-    ]);
+    cmd.args(["pr", "create", "--title", &title, "--body", &body, "--base", &base]);
 
     if args.draft {
         cmd.arg("--draft");

@@ -7,18 +7,9 @@ branding:
   color: "green"
 
 inputs:
-  command:
-    description: "The sr subcommand to run (release, status)"
-    default: "release"
   dry-run:
-    description: "Preview changes without executing them (release only)"
+    description: "Run 'sr status' instead of 'sr release' to preview without making changes"
     default: "false"
-  force:
-    description: "Re-release the current tag (release only)"
-    default: "false"
-  config:
-    description: "Path to the config file"
-    default: "sr.yaml"
   github-token:
     description: "GitHub token for creating releases"
     default: ${{ github.token }}
@@ -28,14 +19,8 @@ inputs:
   git-user-email:
     description: "Git user email for tag creation"
     default: "sr[bot]@urmzd.com"
-  artifacts:
-    description: "Glob patterns for artifact files to upload (newline or comma separated, release only)"
-    default: ""
-  build-command:
-    description: "Shell command to run after version bump, before commit (release only, SR_VERSION and SR_TAG env vars available)"
-    default: ""
   sha256:
-    description: "Expected SHA256 checksum of the sr binary (hex string). When provided, the downloaded binary is verified against this value."
+    description: "Expected SHA256 checksum of the sr binary"
     default: ""
 
 outputs:
@@ -70,10 +55,8 @@ runs:
     - name: Configure git identity
       shell: bash
       run: |
-        echo "::group::Configure git identity"
         git config user.name "${{ inputs.git-user-name }}"
         git config user.email "${{ inputs.git-user-email }}"
-        echo "::endgroup::"
 
     - name: Download sr binary
       shell: bash
@@ -83,8 +66,6 @@ runs:
         SR_SHA256: ${{ inputs.sha256 }}
       run: |
         set -euo pipefail
-        echo "::group::Download sr binary"
-
         OS=$(uname -s | tr '[:upper:]' '[:lower:]')
         ARCH=$(uname -m)
         case "$ARCH" in
@@ -98,7 +79,6 @@ runs:
           *) echo "::error::Unsupported OS: $OS"; exit 1 ;;
         esac
 
-        BINARY_NAME="sr-${TARGET}"
         DEST="$HOME/.local/bin/sr"
         mkdir -p "$HOME/.local/bin"
 
@@ -112,11 +92,8 @@ runs:
           echo "::error::No releases found for ${SR_REPO}"
           exit 1
         fi
-        echo "Resolved ref=${SR_REF} → release=${RELEASE_TAG}"
 
-        URL="https://github.com/${SR_REPO}/releases/download/${RELEASE_TAG}/${BINARY_NAME}"
-        echo "Downloading ${URL}"
-        curl -fsSL "$URL" -o "$DEST"
+        curl -fsSL "https://github.com/${SR_REPO}/releases/download/${RELEASE_TAG}/sr-${TARGET}" -o "$DEST"
 
         if [ -n "$SR_SHA256" ]; then
           ACTUAL=$(sha256sum "$DEST" | awk '{print $1}')
@@ -124,94 +101,42 @@ runs:
             echo "::error::SHA256 mismatch: expected $SR_SHA256, got $ACTUAL"
             exit 1
           fi
-          echo "SHA256 verified: $ACTUAL"
         fi
 
         chmod +x "$DEST"
         echo "$HOME/.local/bin" >> "$GITHUB_PATH"
-        echo "::endgroup::"
 
     - name: Run sr
       id: release
       shell: bash
       env:
         GH_TOKEN: ${{ inputs.github-token }}
-        SR_BUILD_COMMAND: ${{ inputs.build-command }}
       run: |
         set -uo pipefail
-        echo "::group::Run sr"
-
-        COMMAND="${{ inputs.command }}"
-        ARGS=("$COMMAND")
-
-        if [ "$COMMAND" = "release" ]; then
-          if [ "${{ inputs.dry-run }}" = "true" ]; then
-            ARGS+=("--dry-run")
-          fi
-          if [ "${{ inputs.force }}" = "true" ]; then
-            ARGS+=("--force")
-          fi
-          IFS=$'\n,' read -ra PATTERNS <<< "${{ inputs.artifacts }}"
-          for pattern in "${PATTERNS[@]}"; do
-            trimmed=$(echo "$pattern" | xargs)
-            if [ -n "$trimmed" ]; then
-              ARGS+=("--artifacts" "$trimmed")
-            fi
-          done
-          if [ -n "$SR_BUILD_COMMAND" ]; then
-            _BUILD_SCRIPT=$(mktemp /tmp/sr-build-XXXXXX.sh)
-            printf '%s' "$SR_BUILD_COMMAND" > "$_BUILD_SCRIPT"
-            chmod +x "$_BUILD_SCRIPT"
-            ARGS+=("--build-command" "bash $_BUILD_SCRIPT")
-          fi
-        elif [ "$COMMAND" = "status" ]; then
-          ARGS+=("--format" "json")
+        if [ "${{ inputs.dry-run }}" = "true" ]; then
+          CMD="status --format json"
         else
-          echo "::error::Unsupported command: $COMMAND (only 'release' and 'status' are supported)"
-          exit 1
+          CMD="release"
         fi
-
-        echo "Executing: sr ${ARGS[*]}"
         set +e
-        JSON_OUTPUT=$(sr "${ARGS[@]}" | tail -1)
+        JSON_OUTPUT=$(sr $CMD | tail -1)
         EXIT_CODE=${PIPESTATUS[0]}
         set -e
-        echo "sr exited with code ${EXIT_CODE}"
 
         if [ "$EXIT_CODE" -eq 0 ]; then
           echo "json=${JSON_OUTPUT}" >> "$GITHUB_OUTPUT"
-          if [ "$COMMAND" = "release" ]; then
-            echo "version=$(echo "$JSON_OUTPUT" | jq -r '.version')" >> "$GITHUB_OUTPUT"
-            echo "previous_version=$(echo "$JSON_OUTPUT" | jq -r '.previous_version')" >> "$GITHUB_OUTPUT"
-            echo "tag=$(echo "$JSON_OUTPUT" | jq -r '.tag')" >> "$GITHUB_OUTPUT"
-            echo "bump=$(echo "$JSON_OUTPUT" | jq -r '.bump')" >> "$GITHUB_OUTPUT"
-            echo "floating_tag=$(echo "$JSON_OUTPUT" | jq -r '.floating_tag')" >> "$GITHUB_OUTPUT"
-            echo "commit_count=$(echo "$JSON_OUTPUT" | jq -r '.commit_count')" >> "$GITHUB_OUTPUT"
-            echo "released=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "released=false" >> "$GITHUB_OUTPUT"
-          fi
+          echo "version=$(echo "$JSON_OUTPUT" | jq -r '.version')" >> "$GITHUB_OUTPUT"
+          echo "previous_version=$(echo "$JSON_OUTPUT" | jq -r '.previous_version')" >> "$GITHUB_OUTPUT"
+          echo "tag=$(echo "$JSON_OUTPUT" | jq -r '.tag')" >> "$GITHUB_OUTPUT"
+          echo "bump=$(echo "$JSON_OUTPUT" | jq -r '.bump')" >> "$GITHUB_OUTPUT"
+          echo "floating_tag=$(echo "$JSON_OUTPUT" | jq -r '.floating_tag')" >> "$GITHUB_OUTPUT"
+          echo "commit_count=$(echo "$JSON_OUTPUT" | jq -r '.commit_count')" >> "$GITHUB_OUTPUT"
+          echo "released=true" >> "$GITHUB_OUTPUT"
         elif [ "$EXIT_CODE" -eq 2 ]; then
           echo "::notice::No releasable changes found"
-          echo "json=" >> "$GITHUB_OUTPUT"
-          echo "version=" >> "$GITHUB_OUTPUT"
-          echo "previous_version=" >> "$GITHUB_OUTPUT"
-          echo "tag=" >> "$GITHUB_OUTPUT"
-          echo "bump=" >> "$GITHUB_OUTPUT"
-          echo "floating_tag=" >> "$GITHUB_OUTPUT"
-          echo "commit_count=" >> "$GITHUB_OUTPUT"
           echo "released=false" >> "$GITHUB_OUTPUT"
         else
-          echo "json=" >> "$GITHUB_OUTPUT"
-          echo "version=" >> "$GITHUB_OUTPUT"
-          echo "previous_version=" >> "$GITHUB_OUTPUT"
-          echo "tag=" >> "$GITHUB_OUTPUT"
-          echo "bump=" >> "$GITHUB_OUTPUT"
-          echo "floating_tag=" >> "$GITHUB_OUTPUT"
-          echo "commit_count=" >> "$GITHUB_OUTPUT"
           echo "released=false" >> "$GITHUB_OUTPUT"
           echo "::error::sr failed with exit code ${EXIT_CODE}"
-          echo "::endgroup::"
           exit "$EXIT_CODE"
         fi
-        echo "::endgroup::"

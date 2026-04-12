@@ -1,8 +1,0 @@
-{
-    "type": "object",
-    "properties": {
-        "title": { "type": "string", "description": "PR title, under 70 chars" },
-        "body": { "type": "string", "description": "PR body in markdown with ## Summary and ## Test plan sections" }
-    },
-    "required": ["title", "body"]
-}

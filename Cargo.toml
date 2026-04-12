@@ -14,7 +14,6 @@ homepage = "https://github.com/urmzd/sr"
 # Internal crates
 sr-core = { path = "crates/sr-core", version = "3.3.7" }
 
-agentspec-provider = { path = "../agentspec/crates/agentspec-provider" }
 agentspec-ui = "0.6.0"
 agentspec-update = "0.6.0"
 
