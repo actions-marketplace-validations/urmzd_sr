@@ -1,5 +1,18 @@
 # Changelog
 
+## 5.1.0 (2026-04-13)
+
+### Features
+
+- **action**: add artifacts, package, channel, and other release inputs ([9821c67](https://github.com/urmzd/sr/commit/9821c67443c6d8407eb843c921e2e0967b17f3e8))
+
+### Refactoring
+
+- remove dirty working tree check from release ([be2fd4b](https://github.com/urmzd/sr/commit/be2fd4b2809b9e7a77f74be1117b3155d1c3e5b9))
+
+[Full Changelog](https://github.com/urmzd/sr/compare/v5.0.0...v5.1.0)
+
+
 ## 5.0.0 (2026-04-13)
 
 ### Breaking Changes
