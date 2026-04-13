@@ -1,5 +1,59 @@
 # Changelog
 
+## 4.0.0 (2026-04-13)
+
+### Breaking Changes
+
+- remove AI backend, rewrite commands as non-AI wrappers ([6fd775d](https://github.com/urmzd/sr/commit/6fd775df0056dd961b2c6c767f18551fdd171d77))
+- **build**: consolidate workspace and remove sr-ai, sr-git, sr-github crates ([0343b44](https://github.com/urmzd/sr/commit/0343b446972385cf596aac4e045a74dfd82b244a))
+
+### Features
+
+- add sr mcp command — MCP server over stdio ([7ecf60d](https://github.com/urmzd/sr/commit/7ecf60d40c6611d29f237ace429321f97c6d6624))
+
+### Bug Fixes
+
+- **ci**: keep release artifacts outside checkout ([74af3ec](https://github.com/urmzd/sr/commit/74af3ecb71c7cd4e648bad5a6e56c05195b24ee4))
+- **core**: ignore untracked files in release dirty check ([1862bb4](https://github.com/urmzd/sr/commit/1862bb467aba0c0f9b83a6f6c4168bf81db1e3af))
+- **mcp**: show serve in help output ([6b689ab](https://github.com/urmzd/sr/commit/6b689abfd0325bd65ce43b3001b4275989732035))
+- **mcp**: print server info to stderr on startup ([8e8d195](https://github.com/urmzd/sr/commit/8e8d195227fb7d37a3ae07a380e846cec6eead9b))
+
+### Documentation
+
+- update for v4 release and config changes ([79232b4](https://github.com/urmzd/sr/commit/79232b430352393bd4d9fb31a0980c2afb02b475))
+- add migration guide and update README ([b3778d7](https://github.com/urmzd/sr/commit/b3778d78e51907d4bc45b5054cdd42ab22831ea1))
+
+### Refactoring
+
+- **mcp**: split into serve (machine) and init (human) ([ff2cfb8](https://github.com/urmzd/sr/commit/ff2cfb8c265afb96de82c5475f6d5532e8d473b3))
+- **cli**: make mcp a subcommand group with serve ([566d90d](https://github.com/urmzd/sr/commit/566d90d6c33e5e046580bacc77eca216baeb0c9c))
+- **cli**: update for new config structure ([7ddd37e](https://github.com/urmzd/sr/commit/7ddd37e7a6bee89e1158f35ee19d878df27b34b8))
+- **backend**: simplify AI backend configuration ([6b57487](https://github.com/urmzd/sr/commit/6b57487c72dc8b98d436ebbec4901df70833250c))
+- **release**: adapt for restructured config ([fa42163](https://github.com/urmzd/sr/commit/fa4216370bd9180b88c2175f2a91c43023e77bfe))
+- **hooks**: migrate from git hooks to lifecycle events ([2dd0f6c](https://github.com/urmzd/sr/commit/2dd0f6cd50ca53f50f1ae5742649ceb83f7982fd))
+- **config**: restructure into commit, release, and hooks concerns ([5b00f30](https://github.com/urmzd/sr/commit/5b00f30274a1cfef8745a1169abd8e0dcae92d1b))
+- **cli**: reorganize commands as submodules and update imports ([e25165f](https://github.com/urmzd/sr/commit/e25165f864a8f753cbb89de5eebc7bd1db8e3930))
+- **core**: refactor config, hooks, and release modules ([cad23cb](https://github.com/urmzd/sr/commit/cad23cbaa3351cff393acb453d3963aaf71d1740))
+- **core**: update library module structure and remove obsolete cache ([61dbd71](https://github.com/urmzd/sr/commit/61dbd71e8bf09c00032ff56e098467230351418a))
+- **core**: consolidate git and github utilities ([f9288df](https://github.com/urmzd/sr/commit/f9288df28132fa9f7ade2bc5e2d7d927dc85b845))
+- **core**: migrate ai backend and services from sr-ai ([49adf98](https://github.com/urmzd/sr/commit/49adf98ea11d36c61ec78ba6c3f54580fb6134c1))
+
+### Miscellaneous
+
+- **mcp**: add MCP server configuration ([219e728](https://github.com/urmzd/sr/commit/219e728fc5ce7d8c7139271f4a942c0cb3d2509b))
+- fix cargo fmt formatting ([fb2bb28](https://github.com/urmzd/sr/commit/fb2bb289f67c720267e1a4594481fd3c39082550))
+- update GitHub Action for v4 API ([d46450a](https://github.com/urmzd/sr/commit/d46450af79f6258323b11a150b37ad4d6c604cc2))
+- **deps**: update agentspec-provider to local path ([61001ab](https://github.com/urmzd/sr/commit/61001ab8a607b286cb4debacfbf436f9fad1a6b1))
+- **ai**: remove prompt definitions ([3d9e06e](https://github.com/urmzd/sr/commit/3d9e06eff8053093f9de08b45aaf2377d4b06095))
+- **ai**: remove UI module ([f4a78fa](https://github.com/urmzd/sr/commit/f4a78fa81cd5cfdda1a8966c1d19a7be0c323bab))
+- **ai**: remove command modules ([e7e060f](https://github.com/urmzd/sr/commit/e7e060f2e6cfe2f632d3ec7a114b182222bc71f8))
+- **ai**: remove cache subsystem ([7443ad0](https://github.com/urmzd/sr/commit/7443ad050e9b8e142b4cb207a1579c389b0244f8))
+- **ai**: remove backend and core modules ([75d4092](https://github.com/urmzd/sr/commit/75d4092449267fc8dda5224cd9b8e9064b231e64))
+- remove sr-git and sr-github crates ([c63cabf](https://github.com/urmzd/sr/commit/c63cabff4f33de55cc5860787b7fba3d3b5aa2ea))
+
+[Full Changelog](https://github.com/urmzd/sr/compare/v3.4.0...v4.0.0)
+
+
 ## 3.3.7 (2026-04-09)
 
 ### Bug Fixes
