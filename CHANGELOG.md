@@ -1,5 +1,27 @@
 # Changelog
 
+## 4.1.0 (2026-04-13)
+
+### Features
+
+- **cli**: add migrate command and structured MCP diff output ([a58dc62](https://github.com/urmzd/sr/commit/a58dc62ebe10c19abcf24876ce5a63f3b57b4ae5))
+
+### Bug Fixes
+
+- **ci**: sync Cargo.lock versions with v4.0.0 release ([b407ceb](https://github.com/urmzd/sr/commit/b407cebe9abe4efe343092e939b43a319e69cd8a))
+- **ci**: remove collapsed crates from publish step ([33bdee6](https://github.com/urmzd/sr/commit/33bdee6dd6875034bad4a15a03eff06fa05b9ec9))
+
+### Refactoring
+
+- **cli**: remove thin git/gh wrapper commands ([f01f827](https://github.com/urmzd/sr/commit/f01f82721e00d09c1ca783504dffa5a1f79ba199))
+
+### Miscellaneous
+
+- apply rustfmt formatting to mcp and git modules ([0d82909](https://github.com/urmzd/sr/commit/0d82909cde8a3bc58af6c75447b8065408554915))
+
+[Full Changelog](https://github.com/urmzd/sr/compare/v4.0.0...v4.1.0)
+
+
 ## 4.0.0 (2026-04-13)
 
 ### Breaking Changes
