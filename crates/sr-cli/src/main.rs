@@ -275,9 +275,7 @@ async fn run() -> anyhow::Result<()> {
             let path = Path::new(DEFAULT_CONFIG_FILE);
 
             if path.exists() && !force {
-                anyhow::bail!(
-                    "{DEFAULT_CONFIG_FILE} already exists (use --force to overwrite)"
-                );
+                anyhow::bail!("{DEFAULT_CONFIG_FILE} already exists (use --force to overwrite)");
             }
 
             let detected = sr_core::version_files::detect_version_files(Path::new("."));
