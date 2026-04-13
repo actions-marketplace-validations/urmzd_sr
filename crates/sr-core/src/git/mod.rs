@@ -287,6 +287,75 @@ impl GitRepo {
         if ok { Ok(out) } else { self.git(&["diff"]) }
     }
 
+    /// Run `git diff` with explicit context lines and optional file filter.
+    /// When `staged` is true, uses `--cached`; otherwise diffs against HEAD.
+    pub fn diff_unified(&self, staged: bool, context: usize, files: &[String]) -> Result<String> {
+        let ctx_flag = format!("-U{context}");
+        let mut args: Vec<&str> = vec!["diff", &ctx_flag];
+        if staged {
+            args.push("--cached");
+        } else {
+            args.push("HEAD");
+        }
+        if !files.is_empty() {
+            args.push("--");
+            for f in files {
+                args.push(f.as_str());
+            }
+        }
+        let (ok, out) = self.git_allow_failure(&args)?;
+        if ok {
+            Ok(out)
+        } else if !staged && files.is_empty() {
+            // No HEAD yet — fall back to plain diff
+            self.git(&["diff", &ctx_flag])
+        } else {
+            Ok(out)
+        }
+    }
+
+    /// Return per-file numstat: `(additions, deletions, path)`.
+    pub fn diff_numstat(&self, staged: bool, files: &[String]) -> Result<Vec<(usize, usize, String)>> {
+        let mut args: Vec<&str> = vec!["diff", "--numstat"];
+        if staged {
+            args.push("--cached");
+        } else {
+            args.push("HEAD");
+        }
+        if !files.is_empty() {
+            args.push("--");
+            for f in files {
+                args.push(f.as_str());
+            }
+        }
+        let (ok, out) = self.git_allow_failure(&args)?;
+        if !ok && !staged && files.is_empty() {
+            let out = self.git(&["diff", "--numstat"])?;
+            return Self::parse_numstat(&out);
+        }
+        Self::parse_numstat(&out)
+    }
+
+    fn parse_numstat(out: &str) -> Result<Vec<(usize, usize, String)>> {
+        let mut result = Vec::new();
+        for line in out.lines() {
+            let parts: Vec<&str> = line.splitn(3, '\t').collect();
+            if parts.len() == 3 {
+                // Binary files show "-" for additions/deletions
+                let add = parts[0].parse().unwrap_or(0);
+                let del = parts[1].parse().unwrap_or(0);
+                let path = if let Some(pos) = parts[2].find(" => ") {
+                    // Rename: "old => new" or "{old => new}/path"
+                    git_unquote(&parts[2][pos + 4..])
+                } else {
+                    git_unquote(parts[2])
+                };
+                result.push((add, del, path));
+            }
+        }
+        Ok(result)
+    }
+
     pub fn status_porcelain(&self) -> Result<String> {
         self.git(&["status", "--porcelain"])
     }

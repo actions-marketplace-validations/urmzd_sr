@@ -2,7 +2,7 @@ use anyhow::Result;
 use rmcp::handler::server::wrapper::Parameters;
 use rmcp::schemars::{self, JsonSchema};
 use rmcp::{ServiceExt, tool, tool_router};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use sr_core::git::GitRepo;
 
 /// MCP server exposing sr's git operations as tools.
@@ -22,6 +22,143 @@ pub struct DiffParams {
     /// Specific files to diff (empty = all changed files)
     #[serde(default)]
     pub files: Vec<String>,
+    /// Number of unchanged context lines around each change (default: 0).
+    /// Use 0 for minimal output (just the changed lines), increase for more surrounding code.
+    #[serde(default)]
+    pub context: usize,
+    /// Return only the file list with stats, no line-level diffs.
+    /// Use this first to see what changed, then request specific files.
+    #[serde(default)]
+    pub name_only: bool,
+}
+
+// --- Structured diff output types ---
+
+#[derive(Serialize)]
+struct DiffOutput {
+    files: Vec<FileDiff>,
+    total_additions: usize,
+    total_deletions: usize,
+}
+
+#[derive(Serialize)]
+struct FileDiff {
+    path: String,
+    status: char,
+    additions: usize,
+    deletions: usize,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    hunks: Vec<Hunk>,
+}
+
+#[derive(Serialize)]
+struct Hunk {
+    /// Starting line in the old file
+    old_start: usize,
+    /// Number of lines in the old file
+    old_lines: usize,
+    /// Starting line in the new file
+    new_start: usize,
+    /// Number of lines in the new file
+    new_lines: usize,
+    /// Individual line changes
+    changes: Vec<Change>,
+}
+
+#[derive(Serialize)]
+struct Change {
+    /// "add", "delete", or "context"
+    kind: &'static str,
+    /// Line number in the relevant file (new for add/context, old for delete)
+    line: usize,
+    /// The line content (without the +/- prefix)
+    content: String,
+}
+
+fn parse_unified_diff(raw: &str) -> Vec<(String, Vec<Hunk>)> {
+    let mut files: Vec<(String, Vec<Hunk>)> = Vec::new();
+    let mut current_path: Option<String> = None;
+    let mut hunks: Vec<Hunk> = Vec::new();
+    let mut changes: Vec<Change> = Vec::new();
+    let mut hunk_header: Option<(usize, usize, usize, usize)> = None;
+    let mut old_cursor: usize = 0;
+    let mut new_cursor: usize = 0;
+
+    for line in raw.lines() {
+        if line.starts_with("diff --git ") {
+            // Flush previous hunk
+            if let Some((os, ol, ns, nl)) = hunk_header.take() {
+                hunks.push(Hunk { old_start: os, old_lines: ol, new_start: ns, new_lines: nl, changes: std::mem::take(&mut changes) });
+            }
+            // Flush previous file
+            if let Some(path) = current_path.take() {
+                files.push((path, std::mem::take(&mut hunks)));
+            }
+            if let Some(b_part) = line.split(" b/").last() {
+                current_path = Some(b_part.to_string());
+            }
+            continue;
+        }
+
+        if line.starts_with("@@ ") {
+            // Flush previous hunk
+            if let Some((os, ol, ns, nl)) = hunk_header.take() {
+                hunks.push(Hunk { old_start: os, old_lines: ol, new_start: ns, new_lines: nl, changes: std::mem::take(&mut changes) });
+            }
+            if let Some(header) = line.strip_prefix("@@ ") {
+                let parts: Vec<&str> = header.splitn(3, ' ').collect();
+                if parts.len() >= 2 {
+                    let (os, ol) = parse_hunk_range(parts[0].trim_start_matches('-'));
+                    let (ns, nl) = parse_hunk_range(parts[1].trim_start_matches('+'));
+                    old_cursor = os;
+                    new_cursor = ns;
+                    hunk_header = Some((os, ol, ns, nl));
+                }
+            }
+            continue;
+        }
+
+        if line.starts_with("index ") || line.starts_with("--- ") || line.starts_with("+++ ")
+            || line.starts_with("old mode") || line.starts_with("new mode")
+            || line.starts_with("new file") || line.starts_with("deleted file")
+            || line.starts_with("similarity") || line.starts_with("rename ")
+            || line.starts_with("Binary ")
+        {
+            continue;
+        }
+
+        if hunk_header.is_some() {
+            if let Some(content) = line.strip_prefix('+') {
+                changes.push(Change { kind: "add", line: new_cursor, content: content.to_string() });
+                new_cursor += 1;
+            } else if let Some(content) = line.strip_prefix('-') {
+                changes.push(Change { kind: "delete", line: old_cursor, content: content.to_string() });
+                old_cursor += 1;
+            } else if let Some(content) = line.strip_prefix(' ') {
+                changes.push(Change { kind: "context", line: new_cursor, content: content.to_string() });
+                old_cursor += 1;
+                new_cursor += 1;
+            }
+        }
+    }
+
+    // Flush final hunk and file
+    if let Some((os, ol, ns, nl)) = hunk_header {
+        hunks.push(Hunk { old_start: os, old_lines: ol, new_start: ns, new_lines: nl, changes });
+    }
+    if let Some(path) = current_path {
+        files.push((path, hunks));
+    }
+
+    files
+}
+
+fn parse_hunk_range(s: &str) -> (usize, usize) {
+    if let Some((start, count)) = s.split_once(',') {
+        (start.parse().unwrap_or(0), count.parse().unwrap_or(0))
+    } else {
+        (s.parse().unwrap_or(0), 1)
+    }
 }
 
 #[derive(Deserialize, JsonSchema)]
@@ -110,61 +247,88 @@ impl SrMcpServer {
         result
     }
 
-    /// Get the diff for changed files. Use `staged: true` for only staged changes.
-    /// Specify `files` to get diff for specific files only (reduces context size).
+    /// Get structured diff data for changed files. Returns JSON with per-file
+    /// changes, line-level hunks, and stats. Use `name_only` for a quick summary,
+    /// then request specific `files` with the exact changed lines for classification.
     #[tool(
         name = "sr_diff",
-        description = "Get git diff output. Specify files to limit scope and save tokens."
+        description = "Get structured diff: per-file stats + line-level changes as JSON. Use name_only for file list, then drill into specific files."
     )]
     async fn diff(&self, Parameters(params): Parameters<DiffParams>) -> String {
         let repo = match GitRepo::discover() {
             Ok(r) => r,
-            Err(e) => return format!("error: {e}"),
+            Err(e) => return format!("{{\"error\":\"{e}\"}}"),
         };
 
-        if params.files.is_empty() {
-            // Full diff
-            let diff = if params.staged {
-                repo.diff_cached()
-            } else {
-                repo.diff_head()
-            };
-            match diff {
-                Ok(d) if d.trim().is_empty() => "No changes.".to_string(),
-                Ok(d) => d,
-                Err(e) => format!("error: {e}"),
-            }
-        } else {
-            // Per-file diffs (token-efficient)
-            let mut result = String::new();
-            for file in &params.files {
-                let args = if params.staged {
-                    vec!["diff", "--cached", "--", file]
-                } else {
-                    vec!["diff", "HEAD", "--", file]
-                };
-                let output = std::process::Command::new("git")
-                    .args(["-C", &repo.root().to_string_lossy()])
-                    .args(&args)
-                    .output();
-                match output {
-                    Ok(o) if o.status.success() => {
-                        let diff = String::from_utf8_lossy(&o.stdout);
-                        if !diff.trim().is_empty() {
-                            result.push_str(&diff);
-                            result.push('\n');
-                        }
-                    }
-                    Ok(_) => result.push_str(&format!("# {file}: no diff\n")),
-                    Err(e) => result.push_str(&format!("# {file}: error: {e}\n")),
-                }
-            }
-            if result.is_empty() {
-                "No changes for specified files.".to_string()
-            } else {
-                result
-            }
+        // Get per-file stats
+        let stats = match repo.diff_numstat(params.staged, &params.files) {
+            Ok(s) => s,
+            Err(e) => return format!("{{\"error\":\"{e}\"}}"),
+        };
+
+        if stats.is_empty() {
+            return "{\"files\":[],\"total_additions\":0,\"total_deletions\":0}".to_string();
         }
+
+        // Get file statuses for the status character
+        let statuses = repo.file_statuses().unwrap_or_default();
+
+        // Build per-file hunks (unless name_only)
+        let parsed_hunks = if params.name_only {
+            Vec::new()
+        } else {
+            match repo.diff_unified(params.staged, params.context, &params.files) {
+                Ok(raw) => parse_unified_diff(&raw),
+                Err(_) => Vec::new(),
+            }
+        };
+
+        // Index hunks by path for lookup
+        let hunk_map: std::collections::HashMap<&str, &Vec<Hunk>> =
+            parsed_hunks.iter().map(|(p, h)| (p.as_str(), h)).collect();
+
+        let mut total_add = 0;
+        let mut total_del = 0;
+        let mut file_diffs = Vec::new();
+
+        for (add, del, path) in &stats {
+            total_add += add;
+            total_del += del;
+            let status = statuses.get(path.as_str()).copied().unwrap_or('M');
+            let hunks = if params.name_only {
+                Vec::new()
+            } else if let Some(h) = hunk_map.get(path.as_str()) {
+                // Re-serialize the parsed hunks (they're borrowed, need to clone)
+                h.iter().map(|hunk| Hunk {
+                    old_start: hunk.old_start,
+                    old_lines: hunk.old_lines,
+                    new_start: hunk.new_start,
+                    new_lines: hunk.new_lines,
+                    changes: hunk.changes.iter().map(|c| Change {
+                        kind: c.kind,
+                        line: c.line,
+                        content: c.content.clone(),
+                    }).collect(),
+                }).collect()
+            } else {
+                Vec::new()
+            };
+            file_diffs.push(FileDiff {
+                path: path.clone(),
+                status,
+                additions: *add,
+                deletions: *del,
+                hunks,
+            });
+        }
+
+        let output = DiffOutput {
+            files: file_diffs,
+            total_additions: total_add,
+            total_deletions: total_del,
+        };
+
+        serde_json::to_string(&output).unwrap_or_else(|e| format!("{{\"error\":\"{e}\"}}"))
     }
 
     /// Get the commit log. Use `range` for specific ranges (e.g. "main..HEAD" for PR commits)
