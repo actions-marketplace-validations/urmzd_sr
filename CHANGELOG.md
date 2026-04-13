@@ -1,5 +1,18 @@
 # Changelog
 
+## 5.0.0 (2026-04-13)
+
+### Breaking Changes
+
+- clean up v4 breaking changes, update docs and action ([86109b7](https://github.com/urmzd/sr/commit/86109b71d93fe722922e90dd25f9442860e19cd5))
+
+### Miscellaneous
+
+- apply rustfmt formatting ([c677b9a](https://github.com/urmzd/sr/commit/c677b9ac79d782d34bfea76ea032dadc472b4085))
+
+[Full Changelog](https://github.com/urmzd/sr/compare/v4.1.0...v5.0.0)
+
+
 ## 4.1.0 (2026-04-13)
 
 ### Features
