@@ -101,21 +101,6 @@ enum Commands {
         command: McpCommands,
     },
 
-    /// Commit staged changes with a message
-    Commit(commands::commit::CommitArgs),
-
-    /// Fetch and display PR diff for current branch
-    Review(commands::review::ReviewArgs),
-
-    /// Create a git worktree with a new branch
-    Worktree(commands::worktree::WorktreeArgs),
-
-    /// Create a pull request from current branch
-    Pr(commands::pr::PrArgs),
-
-    /// Interactive rebase of recent commits
-    Rebase(commands::rebase::RebaseArgs),
-
     /// Update sr to the latest version
     Update,
 }
@@ -531,11 +516,6 @@ async fn run() -> anyhow::Result<()> {
             McpCommands::Serve => commands::mcp::run().await,
             McpCommands::Init => commands::mcp::config(),
         },
-        Commands::Commit(args) => commands::commit::run(&args).await,
-        Commands::Review(args) => commands::review::run(&args).await,
-        Commands::Worktree(args) => commands::worktree::run(&args).await,
-        Commands::Pr(args) => commands::pr::run(&args).await,
-        Commands::Rebase(args) => commands::rebase::run(&args).await,
         Commands::Update => self_update(),
     }
 }
