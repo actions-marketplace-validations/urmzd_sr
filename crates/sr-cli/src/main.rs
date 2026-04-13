@@ -122,8 +122,7 @@ enum Commands {
 
 #[derive(Subcommand)]
 enum McpCommands {
-    /// Start MCP server over stdio (called by AI tools, not users)
-    #[command(hide = true)]
+    /// Start MCP server over stdio
     Serve,
     /// Create .mcp.json in the current project for agentspec discovery
     Init,
