@@ -1,5 +1,14 @@
 # Changelog
 
+## 6.0.1 (2026-04-14)
+
+### Bug Fixes
+
+- **core**: require colon in BREAKING CHANGE footer detection ([cdf3efd](https://github.com/urmzd/sr/commit/cdf3efda58abfb6d58b3697fbb274b3fb446dc4e))
+
+[Full Changelog](https://github.com/urmzd/sr/compare/v6.0.0...v6.0.1)
+
+
 ## 6.0.0 (2026-04-14)
 
 ### Breaking Changes
