@@ -223,13 +223,62 @@ pub struct CommitParams {
     pub scope: Option<String>,
     /// Short description of the change (imperative mood, no period)
     pub description: String,
+    /// Whether this is a breaking change. Adds "!" after type/scope in the header.
+    #[serde(default)]
+    pub breaking: bool,
     /// Extended description with motivation and context. Optional.
+    /// Separate paragraphs with blank lines.
     pub body: Option<String>,
-    /// Footer lines (e.g. "BREAKING CHANGE: ...", "Closes #123"). Optional.
+    /// Conventional commit footer lines. Optional.
+    /// Each footer should be "token: value" or "token #value".
+    /// Common tokens: BREAKING CHANGE, Closes, Fixes, Refs, Reviewed-by.
+    /// Multiple footers can be separated by newlines.
     pub footer: Option<String>,
     /// Specific files to include in this commit. Empty = all staged files.
     #[serde(default)]
     pub files: Vec<String>,
+}
+
+#[derive(Deserialize, JsonSchema)]
+pub struct PrCreateParams {
+    /// PR title. Should be concise (under 70 chars).
+    pub title: String,
+    /// PR body in markdown. Should include a summary section and test plan.
+    pub body: String,
+    /// Target base branch. Defaults to the repo's default branch.
+    pub base: Option<String>,
+    /// Create as draft PR.
+    #[serde(default)]
+    pub draft: bool,
+    /// Labels to add to the PR.
+    #[serde(default)]
+    pub labels: Vec<String>,
+}
+
+#[derive(Deserialize, JsonSchema)]
+pub struct PrTemplateParams {
+    /// Optional: override the base branch to diff against (default: repo default branch).
+    pub base: Option<String>,
+}
+
+#[derive(Deserialize, JsonSchema)]
+pub struct WorktreeParams {
+    /// Branch name for the worktree (e.g. "feat/add-auth").
+    pub branch: String,
+    /// Short description of the worktree's purpose (e.g. "OAuth2 integration").
+    /// Stored in .sr/worktrees/ metadata for tracking.
+    pub description: String,
+    /// Base ref to branch from. Defaults to HEAD.
+    pub base: Option<String>,
+}
+
+#[derive(Deserialize, JsonSchema)]
+pub struct WorktreeListParams {}
+
+#[derive(Deserialize, JsonSchema)]
+pub struct WorktreeRemoveParams {
+    /// Branch name of the worktree to remove.
+    pub branch: String,
 }
 
 #[derive(Deserialize, JsonSchema)]
@@ -473,15 +522,32 @@ impl SrMcpServer {
         }
 
         // Build conventional commit message
+        let bang = if params.breaking { "!" } else { "" };
         let header = match &params.scope {
-            Some(scope) => format!("{}({}): {}", params.r#type, scope, params.description),
-            None => format!("{}: {}", params.r#type, params.description),
+            Some(scope) => {
+                format!(
+                    "{}({}){}: {}",
+                    params.r#type, scope, bang, params.description
+                )
+            }
+            None => format!("{}{}: {}", params.r#type, bang, params.description),
         };
 
         let mut message = header.clone();
         if let Some(body) = &params.body {
             message.push_str("\n\n");
             message.push_str(body);
+        }
+        // If breaking and no explicit BREAKING CHANGE footer, add one
+        if params.breaking {
+            let has_breaking_footer = params
+                .footer
+                .as_deref()
+                .is_some_and(|f| f.contains("BREAKING CHANGE"));
+            if !has_breaking_footer {
+                message.push_str("\n\n");
+                message.push_str(&format!("BREAKING CHANGE: {}", params.description));
+            }
         }
         if let Some(footer) = &params.footer {
             message.push_str("\n\n");
@@ -527,6 +593,322 @@ impl SrMcpServer {
         }
     }
 
+    /// Generate a PR template based on the commits on the current branch.
+    /// Returns a structured template with title, body sections, and metadata
+    /// that the AI assistant should fill in before calling sr_pr_create.
+    #[tool(
+        name = "sr_pr_template",
+        description = "Generate a PR template from current branch commits. Returns a template to fill in before creating the PR."
+    )]
+    async fn pr_template(&self, Parameters(params): Parameters<PrTemplateParams>) -> String {
+        let repo = match GitRepo::discover() {
+            Ok(r) => r,
+            Err(e) => return format!("error: {e}"),
+        };
+
+        let branch = match repo.current_branch() {
+            Ok(b) => b,
+            Err(e) => return format!("error: {e}"),
+        };
+
+        let base = params.base.as_deref().unwrap_or("main");
+
+        // Get commits on this branch vs base
+        let output = std::process::Command::new("git")
+            .args(["-C", &repo.root().to_string_lossy()])
+            .args(["log", "--oneline", &format!("{base}..HEAD")])
+            .output();
+
+        let commits = match output {
+            Ok(o) if o.status.success() => String::from_utf8_lossy(&o.stdout).trim().to_string(),
+            _ => "(no commits found)".to_string(),
+        };
+
+        // Get diff stats
+        let stats_output = std::process::Command::new("git")
+            .args(["-C", &repo.root().to_string_lossy()])
+            .args(["diff", "--stat", &format!("{base}...HEAD")])
+            .output();
+
+        let stats = match stats_output {
+            Ok(o) if o.status.success() => String::from_utf8_lossy(&o.stdout).trim().to_string(),
+            _ => "(no diff stats)".to_string(),
+        };
+
+        serde_json::to_string_pretty(&serde_json::json!({
+            "branch": branch,
+            "base": base,
+            "commits": commits,
+            "diff_stats": stats,
+            "template": {
+                "title": "<concise title under 70 chars>",
+                "body": "## Summary\n<1-3 bullet points describing what changed and why>\n\n## Test plan\n<how to verify this works>\n",
+                "draft": false,
+                "labels": []
+            },
+            "instructions": "Fill in the template fields based on the commits and diff, then call sr_pr_create."
+        }))
+        .unwrap_or_else(|e| format!("error: {e}"))
+    }
+
+    /// Create a pull request on GitHub. Use sr_pr_template first to generate
+    /// a template, then fill it in and pass it here.
+    /// Requires `gh` CLI to be installed and authenticated.
+    #[tool(
+        name = "sr_pr_create",
+        description = "Create a GitHub PR. Use sr_pr_template first to get a template, fill it in, then call this."
+    )]
+    async fn pr_create(&self, Parameters(params): Parameters<PrCreateParams>) -> String {
+        let repo = match GitRepo::discover() {
+            Ok(r) => r,
+            Err(e) => return format!("error: {e}"),
+        };
+
+        // Push current branch first
+        let branch = match repo.current_branch() {
+            Ok(b) => b,
+            Err(e) => return format!("error: {e}"),
+        };
+
+        let push = std::process::Command::new("git")
+            .args(["-C", &repo.root().to_string_lossy()])
+            .args(["push", "-u", "origin", &branch])
+            .output();
+
+        if let Ok(o) = &push
+            && !o.status.success()
+        {
+            let err = String::from_utf8_lossy(&o.stderr);
+            return format!("error pushing branch: {err}");
+        }
+
+        // Build gh pr create command
+        let mut args = vec![
+            "pr".to_string(),
+            "create".to_string(),
+            "--title".to_string(),
+            params.title.clone(),
+            "--body".to_string(),
+            params.body.clone(),
+        ];
+
+        if let Some(base) = &params.base {
+            args.push("--base".to_string());
+            args.push(base.clone());
+        }
+
+        if params.draft {
+            args.push("--draft".to_string());
+        }
+
+        for label in &params.labels {
+            args.push("--label".to_string());
+            args.push(label.clone());
+        }
+
+        let output = std::process::Command::new("gh")
+            .args(&args)
+            .current_dir(repo.root())
+            .output();
+
+        match output {
+            Ok(o) if o.status.success() => {
+                let url = String::from_utf8_lossy(&o.stdout).trim().to_string();
+                format!("PR created: {url}")
+            }
+            Ok(o) => {
+                let err = String::from_utf8_lossy(&o.stderr).trim().to_string();
+                format!("error: {err}")
+            }
+            Err(e) => format!("error: gh CLI not found or failed: {e}"),
+        }
+    }
+
+    /// Create a git worktree under .sr/worktrees/ with a new branch.
+    /// Prevents duplicates — returns existing worktree if the branch already has one.
+    /// Stores metadata (description, creation time) in .sr/worktrees/<branch>.json
+    /// for tracking purpose and context.
+    ///
+    /// GUIDANCE: Recommend creating a new worktree when the current task goes
+    /// out of scope. Recommend committing current work before switching.
+    #[tool(
+        name = "sr_worktree",
+        description = "Create a git worktree with a new branch under .sr/worktrees/. Tracks metadata (description, purpose). Prevents duplicates. Recommend a new worktree when work goes out of scope."
+    )]
+    async fn worktree(&self, Parameters(params): Parameters<WorktreeParams>) -> String {
+        let repo = match GitRepo::discover() {
+            Ok(r) => r,
+            Err(e) => return format!("error: {e}"),
+        };
+
+        let root = repo.root();
+
+        // Check for existing worktree with this branch
+        if let Some(existing) = find_worktree_by_branch(root, &params.branch) {
+            return serde_json::to_string_pretty(&serde_json::json!({
+                "path": existing,
+                "branch": params.branch,
+                "existing": true,
+            }))
+            .unwrap_or_else(|e| format!("error: {e}"));
+        }
+
+        // Create .sr/worktrees/ directory
+        let sr_dir = root.join(".sr").join("worktrees");
+        if let Err(e) = std::fs::create_dir_all(&sr_dir) {
+            return format!("error creating .sr/worktrees/: {e}");
+        }
+
+        // Sanitize branch name for directory (feat/add-auth → feat-add-auth)
+        let dir_name = params.branch.replace('/', "-");
+        let worktree_dir = sr_dir.join(&dir_name);
+        let base = params.base.as_deref().unwrap_or("HEAD");
+
+        let output = std::process::Command::new("git")
+            .args(["-C", &root.to_string_lossy()])
+            .args([
+                "worktree",
+                "add",
+                &worktree_dir.to_string_lossy(),
+                "-b",
+                &params.branch,
+                base,
+            ])
+            .output();
+
+        match output {
+            Ok(o) if o.status.success() => {
+                // Write metadata
+                let meta = serde_json::json!({
+                    "branch": params.branch,
+                    "description": params.description,
+                    "base": base,
+                    "created": sr_core::release::today_string(),
+                    "path": worktree_dir.to_string_lossy(),
+                });
+                let meta_path = sr_dir.join(format!("{dir_name}.json"));
+                let _ = std::fs::write(
+                    &meta_path,
+                    serde_json::to_string_pretty(&meta).unwrap_or_default(),
+                );
+
+                serde_json::to_string_pretty(&serde_json::json!({
+                    "path": worktree_dir.to_string_lossy(),
+                    "branch": params.branch,
+                    "description": params.description,
+                    "base": base,
+                    "existing": false,
+                }))
+                .unwrap_or_else(|e| format!("error: {e}"))
+            }
+            Ok(o) => {
+                let err = String::from_utf8_lossy(&o.stderr).trim().to_string();
+                format!("error: {err}")
+            }
+            Err(e) => format!("error: {e}"),
+        }
+    }
+
+    /// List all git worktrees with their metadata (description, purpose, creation time).
+    /// Includes both git worktree state and .sr/worktrees/ metadata.
+    #[tool(
+        name = "sr_worktree_list",
+        description = "List all git worktrees with descriptions and metadata from .sr/worktrees/."
+    )]
+    async fn worktree_list(&self, Parameters(_params): Parameters<WorktreeListParams>) -> String {
+        let repo = match GitRepo::discover() {
+            Ok(r) => r,
+            Err(e) => return format!("error: {e}"),
+        };
+
+        let root = repo.root();
+        let output = std::process::Command::new("git")
+            .args(["-C", &root.to_string_lossy()])
+            .args(["worktree", "list", "--porcelain"])
+            .output();
+
+        let worktrees = match output {
+            Ok(o) if o.status.success() => parse_worktree_list(&String::from_utf8_lossy(&o.stdout)),
+            Ok(o) => return format!("error: {}", String::from_utf8_lossy(&o.stderr).trim()),
+            Err(e) => return format!("error: {e}"),
+        };
+
+        // Enrich with .sr/worktrees/ metadata
+        let meta_dir = root.join(".sr").join("worktrees");
+        let enriched: Vec<serde_json::Value> = worktrees
+            .into_iter()
+            .map(|mut wt| {
+                if let Some(branch) = wt.get("branch").and_then(|b| b.as_str()) {
+                    let dir_name = branch.replace('/', "-");
+                    let meta_path = meta_dir.join(format!("{dir_name}.json"));
+                    if let Ok(content) = std::fs::read_to_string(&meta_path)
+                        && let Ok(meta) = serde_json::from_str::<serde_json::Value>(&content)
+                    {
+                        if let Some(desc) = meta.get("description") {
+                            wt.as_object_mut()
+                                .unwrap()
+                                .insert("description".to_string(), desc.clone());
+                        }
+                        if let Some(created) = meta.get("created") {
+                            wt.as_object_mut()
+                                .unwrap()
+                                .insert("created".to_string(), created.clone());
+                        }
+                    }
+                }
+                wt
+            })
+            .collect();
+
+        serde_json::to_string_pretty(&enriched).unwrap_or_else(|e| format!("error: {e}"))
+    }
+
+    /// Remove a git worktree by branch name. Cleans up the worktree directory
+    /// and its .sr/worktrees/ metadata.
+    #[tool(
+        name = "sr_worktree_remove",
+        description = "Remove a git worktree by branch name. Cleans up directory and metadata."
+    )]
+    async fn worktree_remove(
+        &self,
+        Parameters(params): Parameters<WorktreeRemoveParams>,
+    ) -> String {
+        let repo = match GitRepo::discover() {
+            Ok(r) => r,
+            Err(e) => return format!("error: {e}"),
+        };
+
+        let root = repo.root();
+
+        let path = match find_worktree_by_branch(root, &params.branch) {
+            Some(p) => p,
+            None => return format!("error: no worktree found for branch '{}'", params.branch),
+        };
+
+        let output = std::process::Command::new("git")
+            .args(["-C", &root.to_string_lossy()])
+            .args(["worktree", "remove", &path])
+            .output();
+
+        match output {
+            Ok(o) if o.status.success() => {
+                // Clean up metadata
+                let dir_name = params.branch.replace('/', "-");
+                let meta_path = root
+                    .join(".sr")
+                    .join("worktrees")
+                    .join(format!("{dir_name}.json"));
+                let _ = std::fs::remove_file(&meta_path);
+                format!("removed worktree for branch '{}' at {path}", params.branch)
+            }
+            Ok(o) => {
+                let err = String::from_utf8_lossy(&o.stderr).trim().to_string();
+                format!("error: {err}")
+            }
+            Err(e) => format!("error: {e}"),
+        }
+    }
+
     /// Read the sr.yaml configuration for the current repository.
     /// Returns commit types, release branches, version files, and other settings.
     #[tool(
@@ -549,6 +931,67 @@ impl SrMcpServer {
             None => "no sr.yaml found (using defaults)".to_string(),
         }
     }
+}
+
+// --- Worktree helpers ---
+
+/// Parse `git worktree list --porcelain` output into structured JSON values.
+fn parse_worktree_list(text: &str) -> Vec<serde_json::Value> {
+    let mut worktrees: Vec<serde_json::Value> = Vec::new();
+    let mut current = serde_json::Map::new();
+
+    for line in text.lines() {
+        if line.is_empty() {
+            if !current.is_empty() {
+                worktrees.push(serde_json::Value::Object(current.clone()));
+                current.clear();
+            }
+            continue;
+        }
+        if let Some(p) = line.strip_prefix("worktree ") {
+            current.insert("path".into(), serde_json::Value::String(p.into()));
+        } else if let Some(h) = line.strip_prefix("HEAD ") {
+            current.insert(
+                "head".into(),
+                serde_json::Value::String(h[..7.min(h.len())].into()),
+            );
+        } else if let Some(b) = line.strip_prefix("branch refs/heads/") {
+            current.insert("branch".into(), serde_json::Value::String(b.into()));
+        } else if line == "bare" {
+            current.insert("bare".into(), serde_json::Value::Bool(true));
+        }
+    }
+    if !current.is_empty() {
+        worktrees.push(serde_json::Value::Object(current));
+    }
+    worktrees
+}
+
+/// Find the worktree path for a given branch name.
+fn find_worktree_by_branch(root: &std::path::Path, branch: &str) -> Option<String> {
+    let output = std::process::Command::new("git")
+        .args(["-C", &root.to_string_lossy()])
+        .args(["worktree", "list", "--porcelain"])
+        .output()
+        .ok()?;
+
+    if !output.status.success() {
+        return None;
+    }
+
+    let text = String::from_utf8_lossy(&output.stdout);
+    let mut current_path = String::new();
+    for line in text.lines() {
+        if let Some(p) = line.strip_prefix("worktree ") {
+            current_path = p.to_string();
+        }
+        if let Some(b) = line.strip_prefix("branch refs/heads/")
+            && b == branch
+        {
+            return Some(current_path);
+        }
+    }
+    None
 }
 
 /// Write `.mcp.json` in the current project root.

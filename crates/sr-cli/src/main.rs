@@ -272,24 +272,46 @@ async fn run() -> anyhow::Result<()> {
 
     match cli.command {
         Commands::Init { force } => {
+            // sr.yaml
             let path = Path::new(DEFAULT_CONFIG_FILE);
-
-            if path.exists() && !force {
-                anyhow::bail!("{DEFAULT_CONFIG_FILE} already exists (use --force to overwrite)");
-            }
-
-            let detected = sr_core::version_files::detect_version_files(Path::new("."));
-            if !detected.is_empty() {
-                for f in &detected {
-                    eprintln!("detected version file: {f}");
+            if !path.exists() || force {
+                let detected = sr_core::version_files::detect_version_files(Path::new("."));
+                if !detected.is_empty() {
+                    for f in &detected {
+                        eprintln!("detected version file: {f}");
+                    }
                 }
+                let template = sr_core::config::default_config_template(&detected);
+                std::fs::write(path, template)?;
+                eprintln!("wrote {DEFAULT_CONFIG_FILE}");
+            } else {
+                eprintln!(
+                    "{DEFAULT_CONFIG_FILE} already exists (skipping, use --force to overwrite)"
+                );
             }
 
-            let template = sr_core::config::default_config_template(&detected);
-            std::fs::write(path, template)?;
-            eprintln!("wrote {DEFAULT_CONFIG_FILE}");
-
+            // .mcp.json
             commands::mcp::write_mcp_json(force)?;
+
+            // .gitignore — ensure .sr/ is listed
+            let gitignore = Path::new(".gitignore");
+            let needs_entry = if gitignore.exists() {
+                let content = std::fs::read_to_string(gitignore)?;
+                !content
+                    .lines()
+                    .any(|l| l.trim() == ".sr" || l.trim() == ".sr/")
+            } else {
+                true
+            };
+            if needs_entry {
+                use std::io::Write;
+                let mut f = std::fs::OpenOptions::new()
+                    .create(true)
+                    .append(true)
+                    .open(gitignore)?;
+                writeln!(f, "\n# sr cache and worktrees\n.sr/")?;
+                eprintln!("added .sr/ to .gitignore");
+            }
 
             Ok(())
         }
