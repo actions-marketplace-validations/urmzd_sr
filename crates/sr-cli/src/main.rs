@@ -264,7 +264,7 @@ fn self_update() -> anyhow::Result<()> {
 }
 
 fn print_migration_guide() {
-    print!("{}", include_str!("../../../docs/migration.md"));
+    print!("{}", include_str!("../docs/migration.md"));
 }
 
 async fn run() -> anyhow::Result<()> {
