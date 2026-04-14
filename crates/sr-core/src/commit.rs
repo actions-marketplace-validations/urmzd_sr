@@ -196,15 +196,13 @@ impl CommitParser for DefaultCommitParser {
             .map(|x| x.1)
             .map(|b| b.to_string());
 
-        // Detect BREAKING CHANGE / BREAKING-CHANGE footers in the body
+        // Detect BREAKING CHANGE: / BREAKING-CHANGE: footers in the body.
+        // Per the Conventional Commits spec, footers must start at column 0
+        // (no leading whitespace) and use a colon separator.
         let breaking = breaking
             || body.as_deref().is_some_and(|b| {
                 b.lines().any(|line| {
-                    let trimmed = line.trim();
-                    trimmed.starts_with("BREAKING CHANGE:")
-                        || trimmed.starts_with("BREAKING CHANGE ")
-                        || trimmed.starts_with("BREAKING-CHANGE:")
-                        || trimmed.starts_with("BREAKING-CHANGE ")
+                    line.starts_with("BREAKING CHANGE:") || line.starts_with("BREAKING-CHANGE:")
                 })
             });
 
@@ -394,6 +392,26 @@ mod tests {
         // Body text that mentions "BREAKING CHANGE" but not as a footer line
         let result = DefaultCommitParser
             .parse(&raw("fix: tweak\n\nThis is not a BREAKING CHANGE footer"))
+            .unwrap();
+        assert!(!result.breaking);
+    }
+
+    #[test]
+    fn parse_no_breaking_change_indented_bullet() {
+        // Indented bullet mentioning BREAKING CHANGE should not trigger a major bump
+        let result = DefaultCommitParser
+            .parse(&raw(
+                "feat(mcp): add breaking flag\n\n- add `breaking` field — sets \"!\" and adds\n  BREAKING CHANGE footer automatically",
+            ))
+            .unwrap();
+        assert!(!result.breaking);
+    }
+
+    #[test]
+    fn parse_no_breaking_change_space_separator() {
+        // "BREAKING CHANGE " (space, no colon) is not a valid footer per spec
+        let result = DefaultCommitParser
+            .parse(&raw("feat: something\n\nBREAKING CHANGE without colon"))
             .unwrap();
         assert!(!result.breaking);
     }

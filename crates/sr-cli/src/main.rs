@@ -100,7 +100,7 @@ enum Commands {
     /// Update sr to the latest version
     Update,
 
-    /// Show migration guide to sr 5.x
+    /// Show migration guide
     Migrate,
 }
 

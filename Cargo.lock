@@ -1421,7 +1421,7 @@ dependencies = [
 
 [[package]]
 name = "sr-cli"
-version = "5.1.0"
+version = "6.0.0"
 dependencies = [
  "agentspec-ui",
  "agentspec-update",
@@ -1442,7 +1442,7 @@ dependencies = [
 
 [[package]]
 name = "sr-core"
-version = "5.1.0"
+version = "6.0.0"
 dependencies = [
  "anyhow",
  "base64",

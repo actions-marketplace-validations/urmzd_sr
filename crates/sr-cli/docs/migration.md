@@ -7,6 +7,7 @@
 | **3.x** | AI-powered CLI | Built-in AI backends, git hooks, flat config |
 | **4.x** | Config restructure + MCP | Nested config, MCP server, AI backends removed (commands kept as thin wrappers) |
 | **5.x** | Release-only CLI | CLI commands stripped to release engineering; all git/PR/review workflows move to MCP tools |
+| **6.x** | MCP-first workflows | PR, worktree, and breaking-commit tools added to MCP server; `sr init` improved |
 
 ---
 
@@ -258,18 +259,65 @@ date. The `.sr/` directory is automatically gitignored by `sr init`.
 
 ---
 
-## Migrating from 3.x directly to 5.x
+## Migrating from 5.x to 6.x
 
-Follow both sections above in order:
+v6 is a non-breaking release that was triggered by a version bump. There are no
+breaking changes for users. All v5 config, action inputs, and CLI commands work
+unchanged.
+
+### What's new in v6
+
+**MCP tools added:**
+
+| Tool | Description |
+|------|-------------|
+| `sr_commit` | Now supports `breaking` flag — auto-adds `!` suffix and `BREAKING CHANGE:` footer |
+| `sr_pr_template` | Generates PR template from branch commits and diff stats |
+| `sr_pr_create` | Creates GitHub PR via `gh` CLI (title, body, labels, draft) |
+| `sr_worktree` | Creates worktrees under `.sr/worktrees/` with metadata tracking |
+| `sr_worktree_list` | Lists all worktrees with descriptions and creation dates |
+| `sr_worktree_remove` | Removes worktree and cleans up metadata |
+
+**`sr init` improvements:**
+
+- No longer fails if `sr.yaml` already exists — each step (sr.yaml, .mcp.json,
+  .gitignore) runs independently and skips files that already exist
+- Automatically adds `.sr/` to `.gitignore` (used for worktree metadata)
+
+### GitHub Action: v5 → v6
+
+Update `@v5` → `@v6`. All inputs and outputs are unchanged:
+
+```yaml
+# Before
+- uses: urmzd/sr@v5
+
+# After
+- uses: urmzd/sr@v6
+```
+
+### Worktree management via `.sr/`
+
+Worktrees created via MCP (`sr_worktree`) are stored under `.sr/worktrees/`
+instead of sibling directories. Each worktree gets a metadata file at
+`.sr/worktrees/<branch>.json` tracking its purpose, description, and creation
+date. The `.sr/` directory is automatically gitignored by `sr init`.
+
+---
+
+## Migrating from 3.x directly to 6.x
+
+Follow the 3.x→4.x, 4.x→5.x, and 5.x→6.x sections above in order, or use
+this quick checklist:
 
 1. **Remove git hooks** — delete `.githooks/`, unset `core.hooksPath`
 2. **Restructure sr.yaml** — move flat fields into `commit:`, `release:`, `hooks:` sections
-3. **Update action** — change `@v3` to `@v5`
+3. **Update action** — change `@v3` to `@v6`
 4. **Update scripts** — replace `sr version`, `sr changelog`, `sr plan` with `sr status`
 
-### Action input migration: v3 → v5
+### Action input migration: v3 → v6
 
-| v3 input | v5 equivalent |
+| v3 input | v6 equivalent |
 |----------|---------------|
 | `command: release` | Default (no input needed) |
 | `command: plan` | `dry-run: "true"` |
@@ -287,7 +335,7 @@ VERSION=$(sr version --short)
 sr changelog --write
 sr plan --format json
 
-# 5.x
+# 6.x
 VERSION=$(sr status --format json | jq -r '.next_version')
 # Changelog is written automatically by sr release
 sr status --format json
