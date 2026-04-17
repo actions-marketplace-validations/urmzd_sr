@@ -11,6 +11,9 @@ git:
   tag_prefix: "v"
   floating_tag: true
   sign_tags: false
+  user:
+    name: "sr-releaser[bot]"
+    email: "sr-releaser[bot]@users.noreply.github.com"
 
 channels:
   branch: main

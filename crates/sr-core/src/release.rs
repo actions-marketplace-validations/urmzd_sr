@@ -263,9 +263,11 @@ where
             return Err(ReleaseError::NoCommits { tag, sha });
         }
 
+        let skip_patterns = &self.config.git.skip_patterns;
         let conventional_commits: Vec<ConventionalCommit> = raw_commits
             .iter()
             .filter(|c| !c.message.starts_with("chore(release):"))
+            .filter(|c| !skip_patterns.iter().any(|p| c.message.contains(p.as_str())))
             .filter_map(|c| self.parser.parse(c).ok())
             .collect();
 
@@ -920,18 +922,25 @@ mod tests {
     type TestStrategy =
         TrunkReleaseStrategy<FakeGit, FakeVcs, TypedCommitParser, DefaultChangelogFormatter>;
 
-    /// Build a Config with changelog file disabled so tests don't pollute the real CHANGELOG.md.
+    /// Build a Config with changelog file disabled and a dummy version file,
+    /// so tests don't pollute the real CHANGELOG.md or auto-detect and bump
+    /// the actual Cargo.toml of whichever crate is running the tests.
     fn test_config() -> Config {
         Config {
             changelog: ChangelogConfig {
                 file: None,
                 ..Default::default()
             },
+            packages: vec![PackageConfig {
+                path: ".".into(),
+                version_files: vec!["__sr_test_dummy_no_bump__".into()],
+                ..Default::default()
+            }],
             ..Default::default()
         }
     }
 
-    /// Build a Config with custom floating_tag / tag_prefix settings.
+    /// Build a Config with custom git settings (still isolated from real files).
     fn config_with_git(git: GitConfig) -> Config {
         Config {
             git,
@@ -939,6 +948,11 @@ mod tests {
                 file: None,
                 ..Default::default()
             },
+            packages: vec![PackageConfig {
+                path: ".".into(),
+                version_files: vec!["__sr_test_dummy_no_bump__".into()],
+                ..Default::default()
+            }],
             ..Default::default()
         }
     }
@@ -1012,6 +1026,42 @@ mod tests {
         assert_eq!(plan.next_version, Version::new(0, 1, 0));
         assert_eq!(plan.tag_name, "v0.1.0");
         assert!(plan.current_version.is_none());
+    }
+
+    #[test]
+    fn plan_skips_commits_matching_skip_patterns() {
+        let s = make_strategy(
+            vec![],
+            vec![
+                raw_commit("feat: real feature"),
+                raw_commit("feat: noisy experiment [skip release]"),
+                raw_commit("fix: swallowed fix [skip sr]"),
+            ],
+            test_config(),
+        );
+        let plan = s.plan().unwrap();
+        assert_eq!(plan.commits.len(), 1);
+        assert_eq!(plan.commits[0].description, "real feature");
+    }
+
+    #[test]
+    fn plan_custom_skip_patterns_override_defaults() {
+        let git = GitConfig {
+            skip_patterns: vec!["DO-NOT-RELEASE".into()],
+            ..Default::default()
+        };
+        let s = make_strategy(
+            vec![],
+            vec![
+                raw_commit("feat: shipped"),
+                raw_commit("feat: DO-NOT-RELEASE internal"),
+                // default patterns no longer active → this commit counts
+                raw_commit("feat: still here [skip release]"),
+            ],
+            config_with_git(git),
+        );
+        let plan = s.plan().unwrap();
+        assert_eq!(plan.commits.len(), 2);
     }
 
     #[test]
@@ -1360,6 +1410,7 @@ mod tests {
             },
             packages: vec![PackageConfig {
                 path: ".".into(),
+                version_files: vec!["__sr_test_dummy_no_bump__".into()],
                 artifacts: vec![
                     dir.path().join("*.tar.gz").to_str().unwrap().to_string(),
                     dir.path().join("*.zip").to_str().unwrap().to_string(),
@@ -1393,6 +1444,7 @@ mod tests {
             },
             packages: vec![PackageConfig {
                 path: ".".into(),
+                version_files: vec!["__sr_test_dummy_no_bump__".into()],
                 artifacts: vec![dir.path().join("*.tar.gz").to_str().unwrap().to_string()],
                 ..Default::default()
             }],

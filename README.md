@@ -152,8 +152,8 @@ jobs:
 | `dry-run` | Run `sr status` instead of `sr release` to preview without making changes | `false` |
 | `force` | Re-release the current tag (use when a previous release partially failed) | `false` |
 | `github-token` | GitHub token for creating releases | `${{ github.token }}` |
-| `git-user-name` | Git user name for tag creation | `sr[bot]` |
-| `git-user-email` | Git user email for tag creation | `sr[bot]@urmzd.com` |
+| `git-user-name` | Git author/committer name for the release commit and tag. Pass empty to let `sr.yaml` (`git.user.name`) or the repo's git config take over | `sr-releaser[bot]` |
+| `git-user-email` | Git author/committer email for the release commit and tag. Pass empty to let `sr.yaml` (`git.user.email`) or the repo's git config take over | `sr-releaser[bot]@users.noreply.github.com` |
 | `artifacts` | Glob patterns for artifact files to upload (space-separated) | `""` |
 | `package` | Target a specific monorepo package | `""` |
 | `channel` | Release channel (e.g. canary, rc, stable) | `""` |
@@ -446,6 +446,9 @@ The config has 6 top-level sections — `git`, `commit`, `changelog`, `channels`
 | `git.floating_tag` | `bool` | `true` | Create floating major version tags (e.g. `v3` always points to the latest `v3.x.x` release) |
 | `git.sign_tags` | `bool` | `false` | Sign annotated tags with GPG/SSH |
 | `git.v0_protection` | `bool` | `true` | Prevent a breaking change from bumping `0.x` to `1.0.0` — stays at `0.x` |
+| `git.user.name` | `string?` | `null` | Git author/committer name for the release commit and tag. When unset, sr uses the repo's git config (or the env fallback `SR_GIT_USER_NAME`) |
+| `git.user.email` | `string?` | `null` | Git author/committer email. When unset, sr uses the repo's git config (or the env fallback `SR_GIT_USER_EMAIL`) |
+| `git.skip_patterns` | `string[]` | `["[skip release]", "[skip sr]"]` | Substrings that, when present in a commit message, exclude that commit from release planning and the changelog |
 
 #### `commit`
 
@@ -506,6 +509,14 @@ git:
   floating_tag: true
   sign_tags: false
   v0_protection: true
+  # Override the release commit/tag identity. When omitted, sr uses the
+  # repo's git config (or SR_GIT_USER_NAME / SR_GIT_USER_EMAIL env vars).
+  # user:
+  #   name: "sr-releaser[bot]"
+  #   email: "sr-releaser[bot]@users.noreply.github.com"
+  skip_patterns:
+    - "[skip release]"
+    - "[skip sr]"
 
 commit:
   types:
@@ -632,6 +643,8 @@ packages:
 | Variable | Context | Description |
 |----------|---------|-------------|
 | `GH_TOKEN` / `GITHUB_TOKEN` | Release | GitHub API token for creating releases and uploading artifacts. Not needed for `--dry-run` |
+| `SR_GIT_USER_NAME` | Release | Fallback git author/committer name. Consulted only when neither `--git-user-name` nor `git.user.name` in `sr.yaml` is set |
+| `SR_GIT_USER_EMAIL` | Release | Fallback git author/committer email. Same precedence as `SR_GIT_USER_NAME` |
 | `SR_VERSION` | Release hooks | The new version string (e.g. `1.2.3`), set for `pre_release` and `post_release` hooks |
 | `SR_TAG` | Release hooks | The new tag name (e.g. `v1.2.3`), set for `pre_release` and `post_release` hooks |
 
@@ -853,6 +866,47 @@ This means:
 - **Freeform messages** (`fixed the bug`, `wip`) — ignored
 
 If *all* commits since the last tag are non-conventional, sr exits with code 2 (no releasable changes).
+
+### Skipping individual commits
+
+Drop a skip token anywhere in a commit message to exclude it from release planning and the changelog:
+
+```
+feat: internal scratch work [skip release]
+```
+
+Out of the box, `[skip release]` and `[skip sr]` are recognized. Customize via `git.skip_patterns` in `sr.yaml`:
+
+```yaml
+git:
+  skip_patterns:
+    - "[skip release]"
+    - "[skip sr]"
+    - "DO-NOT-RELEASE"
+```
+
+Matching is a plain substring check against the full commit message, so the token can live in the subject or the body. sr also always filters its own `chore(release): …` commits regardless of configuration.
+
+### Overriding the commit/tag author
+
+By default sr uses whatever identity `git` resolves from its normal sources (`user.name` / `user.email` in the repo, `GIT_AUTHOR_*` env vars, etc.). To override without mutating the repo's git config, set either:
+
+```yaml
+# sr.yaml
+git:
+  user:
+    name: "sr-releaser[bot]"
+    email: "sr-releaser[bot]@users.noreply.github.com"
+```
+
+or pass the CLI flags on `sr release`:
+
+```bash
+sr release --git-user-name "sr-releaser[bot]" \
+           --git-user-email "sr-releaser[bot]@users.noreply.github.com"
+```
+
+Precedence is **CLI flag > `sr.yaml` > `SR_GIT_USER_NAME` / `SR_GIT_USER_EMAIL` env > git's own resolution**. sr passes the identity via `git -c user.name=… -c user.email=…` per invocation, so persisted config is never rewritten.
 
 ### How merge strategies affect sr
 

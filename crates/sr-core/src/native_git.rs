@@ -11,6 +11,8 @@ use semver::Version;
 pub struct NativeGitRepository {
     path: PathBuf,
     http_auth: Option<(String, String)>, // (hostname, token)
+    user_name: Option<String>,
+    user_email: Option<String>,
 }
 
 impl NativeGitRepository {
@@ -18,6 +20,8 @@ impl NativeGitRepository {
         let repo = Self {
             path: path.to_path_buf(),
             http_auth: None,
+            user_name: None,
+            user_email: None,
         };
         // Validate this is a git repo
         repo.git(&["rev-parse", "--git-dir"])?;
@@ -33,12 +37,29 @@ impl NativeGitRepository {
         self
     }
 
+    /// Override the git author/committer identity for this repo's operations.
+    /// Applied per-invocation via `-c user.name=` / `-c user.email=` so the
+    /// repo's persisted config is not mutated. `None` leaves git to resolve
+    /// the identity from its normal sources (env, repo config, global config).
+    pub fn with_identity(mut self, name: Option<String>, email: Option<String>) -> Self {
+        self.user_name = name;
+        self.user_email = email;
+        self
+    }
+
     fn git(&self, args: &[&str]) -> Result<String, ReleaseError> {
         let mut cmd = Command::new("git");
         // Prevent git from ever blocking on interactive credential prompts.
         // This makes unauthenticated operations fail fast instead of hanging.
         cmd.env("GIT_TERMINAL_PROMPT", "0");
         cmd.arg("-C").arg(&self.path);
+
+        if let Some(name) = &self.user_name {
+            cmd.args(["-c", &format!("user.name={name}")]);
+        }
+        if let Some(email) = &self.user_email {
+            cmd.args(["-c", &format!("user.email={email}")]);
+        }
 
         // Inject HTTP Basic auth header scoped to the target hostname.
         // First clear any existing extraheader (e.g. from actions/checkout) to

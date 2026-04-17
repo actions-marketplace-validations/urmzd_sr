@@ -63,7 +63,7 @@ fn default_packages() -> Vec<PackageConfig> {
 // Git config
 // ---------------------------------------------------------------------------
 
-/// Git-level settings — tags and signing.
+/// Git-level settings — tags, signing, identity, commit filtering.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct GitConfig {
@@ -76,6 +76,13 @@ pub struct GitConfig {
     /// Prevent breaking changes from bumping 0.x.y to 1.0.0.
     /// When true, major bumps at v0 are downshifted to minor.
     pub v0_protection: bool,
+    /// Override the git identity used for release commits and tags.
+    /// When unset, sr leaves it to the repo's git config / environment.
+    pub user: GitUserConfig,
+    /// Substrings that, when present in a commit message, exclude that
+    /// commit from release planning and changelog. Matched against the full
+    /// commit message. `chore(release):` is always filtered regardless.
+    pub skip_patterns: Vec<String>,
 }
 
 impl Default for GitConfig {
@@ -85,8 +92,29 @@ impl Default for GitConfig {
             floating_tag: true,
             sign_tags: false,
             v0_protection: true,
+            user: GitUserConfig::default(),
+            skip_patterns: default_skip_patterns(),
         }
     }
+}
+
+/// Git author/committer identity for release operations.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct GitUserConfig {
+    /// Author/committer name. None = inherit from git config / env.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    /// Author/committer email. None = inherit from git config / env.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub email: Option<String>,
+}
+
+/// Default skip tokens. `[skip release]` and `[skip sr]` are recognized out
+/// of the box so users can opt a commit out of the release without touching
+/// config.
+pub fn default_skip_patterns() -> Vec<String> {
+    vec!["[skip release]".into(), "[skip sr]".into()]
 }
 
 // ---------------------------------------------------------------------------
@@ -571,6 +599,14 @@ git:
   floating_tag: true
   sign_tags: false
   v0_protection: true
+  # user:
+  #   name: "sr-releaser[bot]"
+  #   email: "sr-releaser[bot]@users.noreply.github.com"
+  # Commits whose message contains any of these substrings are excluded from
+  # the release plan and changelog. chore(release): is always filtered.
+  skip_patterns:
+    - "[skip release]"
+    - "[skip sr]"
 
 commit:
   types:
@@ -650,7 +686,6 @@ packages:
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::io::Write;
 
     #[test]
     fn default_values() {
@@ -828,6 +863,43 @@ mod tests {
         assert_eq!(config.git.tag_prefix, "v");
         assert!(config.git.floating_tag);
         assert_eq!(config.channels.default, "stable");
+        assert!(
+            config
+                .git
+                .skip_patterns
+                .iter()
+                .any(|p| p == "[skip release]")
+        );
+    }
+
+    #[test]
+    fn default_skip_patterns_present() {
+        let config = Config::default();
+        assert_eq!(
+            config.git.skip_patterns,
+            vec!["[skip release]".to_string(), "[skip sr]".to_string()]
+        );
+    }
+
+    #[test]
+    fn git_user_defaults_to_none() {
+        let config = Config::default();
+        assert!(config.git.user.name.is_none());
+        assert!(config.git.user.email.is_none());
+    }
+
+    #[test]
+    fn git_user_loads_from_yaml() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.yml");
+        std::fs::write(
+            &path,
+            "git:\n  user:\n    name: \"Bot\"\n    email: \"bot@example.com\"\n",
+        )
+        .unwrap();
+        let config = Config::load(&path).unwrap();
+        assert_eq!(config.git.user.name.as_deref(), Some("Bot"));
+        assert_eq!(config.git.user.email.as_deref(), Some("bot@example.com"));
     }
 
     #[test]

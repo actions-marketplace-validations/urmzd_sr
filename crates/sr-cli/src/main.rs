@@ -56,6 +56,14 @@ enum Commands {
         /// Create GitHub release as a draft (requires manual publishing)
         #[arg(long)]
         draft: bool,
+
+        /// Override the git author/committer name for the release commit and tag
+        #[arg(long = "git-user-name")]
+        git_user_name: Option<String>,
+
+        /// Override the git author/committer email for the release commit and tag
+        #[arg(long = "git-user-email")]
+        git_user_email: Option<String>,
     },
 
     /// Show repo status: unreleased commits, next version, changelog preview, open PRs
@@ -117,7 +125,8 @@ fn build_local_strategy(
         DefaultChangelogFormatter,
     >,
 > {
-    let git = NativeGitRepository::open(Path::new("."))?;
+    let (name, email) = (config.git.user.name.clone(), config.git.user.email.clone());
+    let git = NativeGitRepository::open(Path::new("."))?.with_identity(name, email);
     let commit_types = config.commit.types.into_commit_types();
     let parser = TypedCommitParser::from_types(&commit_types);
     let formatter = DefaultChangelogFormatter::new(
@@ -149,7 +158,8 @@ fn build_full_strategy(
         DefaultChangelogFormatter,
     >,
 > {
-    let git = NativeGitRepository::open(Path::new("."))?;
+    let (name, email) = (config.git.user.name.clone(), config.git.user.email.clone());
+    let git = NativeGitRepository::open(Path::new("."))?.with_identity(name, email);
     let (hostname, owner, repo) = git.parse_remote_full()?;
 
     let token = std::env::var("GH_TOKEN")
@@ -510,6 +520,8 @@ fn run() -> anyhow::Result<()> {
             prerelease,
             sign_tags,
             draft,
+            git_user_name,
+            git_user_email,
         } => {
             let mut config = load_config()?;
 
@@ -525,6 +537,14 @@ fn run() -> anyhow::Result<()> {
             if sign_tags {
                 config.git.sign_tags = true;
             }
+
+            // Git identity precedence: CLI flag > sr.yaml > env > git's own resolution.
+            config.git.user.name = git_user_name
+                .or(config.git.user.name.take())
+                .or_else(|| std::env::var("SR_GIT_USER_NAME").ok());
+            config.git.user.email = git_user_email
+                .or(config.git.user.email.take())
+                .or_else(|| std::env::var("SR_GIT_USER_EMAIL").ok());
 
             // CLI overrides for package config (apply to root package)
             if (!artifacts.is_empty() || !stage_files.is_empty())

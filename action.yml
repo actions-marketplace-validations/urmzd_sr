@@ -17,11 +17,11 @@ inputs:
     description: "GitHub token for creating releases"
     default: ${{ github.token }}
   git-user-name:
-    description: "Git user name for tag creation"
-    default: "sr[bot]"
+    description: "Git author/committer name for the release commit and tag. Pass empty string to let sr.yaml (git.user.name) or the repo's local git config take over."
+    default: "sr-releaser[bot]"
   git-user-email:
-    description: "Git user email for tag creation"
-    default: "sr[bot]@urmzd.com"
+    description: "Git author/committer email for the release commit and tag. Pass empty string to let sr.yaml (git.user.email) or the repo's local git config take over."
+    default: "sr-releaser[bot]@users.noreply.github.com"
   artifacts:
     description: "Glob patterns for artifact files to upload (space-separated, passed as --artifacts)"
     default: ""
@@ -76,12 +76,6 @@ outputs:
 runs:
   using: "composite"
   steps:
-    - name: Configure git identity
-      shell: bash
-      run: |
-        git config user.name "${{ inputs.git-user-name }}"
-        git config user.email "${{ inputs.git-user-email }}"
-
     - name: Download sr binary
       shell: bash
       env:
@@ -168,6 +162,12 @@ runs:
           fi
           if [ "${{ inputs.draft }}" = "true" ]; then
             CMD="$CMD --draft"
+          fi
+          if [ -n "${{ inputs.git-user-name }}" ]; then
+            CMD="$CMD --git-user-name \"${{ inputs.git-user-name }}\""
+          fi
+          if [ -n "${{ inputs.git-user-email }}" ]; then
+            CMD="$CMD --git-user-email \"${{ inputs.git-user-email }}\""
           fi
         fi
         set +e
